@@ -1,0 +1,9 @@
+{
+  "name": "agent-poc",
+  "private": true,
+  "scripts": {
+    "dev:agent": "pnpm --filter agent-demo dev",
+    "dev:mcp": "pnpm --filter x402-mcp dev",
+    "build": "pnpm -r build"
+  }
+}
