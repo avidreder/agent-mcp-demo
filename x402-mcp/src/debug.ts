@@ -47,6 +47,31 @@ export function createDefaultDebugHandler(): DebugHandler {
       case "error":
         console.error(`${prefix} ${time} ERROR:`, event.data.message);
         break;
+      case "x402_payment_required":
+        console.log(
+          `${prefix} ${time} 💰 PAYMENT_REQUIRED → ${event.data.name}`
+        );
+        break;
+      case "x402_payment_creating":
+        console.log(
+          `${prefix} ${time} 💰 PAYMENT_CREATING → ${event.data.name}`
+        );
+        break;
+      case "x402_payment_sending":
+        console.log(
+          `${prefix} ${time} 💰 PAYMENT_SENDING → ${event.data.name}`
+        );
+        break;
+      case "x402_payment_success":
+        console.log(
+          `${prefix} ${time} 💰 PAYMENT_SUCCESS ← ${event.data.name}`
+        );
+        break;
+      case "x402_payment_failed":
+        console.error(
+          `${prefix} ${time} 💰 PAYMENT_FAILED ← ${event.data.name}`
+        );
+        break;
     }
   };
 }

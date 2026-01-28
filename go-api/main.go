@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/andrewreder/agent-poc/go-api/x402"
 )
 
 // Resource represents a discoverable resource
@@ -127,6 +128,23 @@ func resourceHandler(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.Re
 	return nil, fmt.Errorf("resource not found: %s", uri)
 }
 
+// x402 middleware instance (configured with synthetic payment details)
+// TODO: Load these from environment variables or config
+var x402Middleware = x402.NewMiddleware(
+	"http://localhost:8080",                               // Server URL
+	"0x1234567890abcdef1234567890abcdef12345678",          // TODO: Real payTo address
+	"eip155:84532",                                         // Base Sepolia testnet
+	"0x036CbD53842c5426634e7929541eC2318f3dCF7e",          // TODO: Real USDC contract address
+)
+
+func init() {
+	// Configure tool pricing
+	// TODO: Load pricing from config or database
+	x402Middleware.SetToolPrice("get_weather", "1000")      // 0.001 USDC (6 decimals)
+	x402Middleware.SetToolPrice("get_stock_quote", "5000")  // 0.005 USDC
+	x402Middleware.SetToolPrice("get_news", "2000")         // 0.002 USDC
+}
+
 func createMCPServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "x402-discovery",
@@ -143,21 +161,21 @@ func createMCPServer() *mcp.Server {
 		}, resourceHandler)
 	}
 
-	// Register tools
+	// Register tools with x402 payment middleware
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_weather",
 		Description: "Get current weather for a location",
-	}, getWeather)
+	}, x402.WrapToolHandler(x402Middleware, "get_weather", getWeather))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stock_quote",
 		Description: "Get the current stock price for a ticker symbol",
-	}, getStockQuote)
+	}, x402.WrapToolHandler(x402Middleware, "get_stock_quote", getStockQuote))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_news",
 		Description: "Get latest news headlines for a topic",
-	}, getNews)
+	}, x402.WrapToolHandler(x402Middleware, "get_news", getNews))
 
 	return server
 }

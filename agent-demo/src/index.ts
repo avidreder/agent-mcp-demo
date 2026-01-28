@@ -45,6 +45,9 @@ async function main() {
   const mcpClient = new X402MCPClient({
     serverUrl: MCP_SERVER_URL,
     debug: DEBUG_MODE,
+    // Enable x402 payment support with wallet address
+    walletAddress: wallet.address,
+    autoPayment: true, // Automatically retry with payment on 402
     interceptors: {
       // Example: Log outgoing requests with wallet context
       beforeToolCall: [
@@ -55,7 +58,7 @@ async function main() {
           return request;
         },
       ],
-      // Example: Log response timing
+      // Example: Log response timing and payment info
       afterToolCall: [
         async (
           request: ToolCallRequest,
@@ -63,6 +66,13 @@ async function main() {
         ) => {
           if (DEBUG_MODE) {
             ui.info(`Tool ${request.name} completed in ${response.duration}ms`);
+          }
+          // Log x402 payment info if present
+          if (response.paymentRequired) {
+            ui.info(`💰 Payment was required for ${request.name}`);
+            if (response.paymentResponse?.success) {
+              ui.success(`Payment successful: ${response.paymentResponse.transaction || 'completed'}`);
+            }
           }
           return response;
         },

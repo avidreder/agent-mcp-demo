@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { createDefaultDebugHandler } from "./debug.js";
+import { X402Handler } from "./x402-handler.js";
+import type { PaymentRequiredData, PaymentRequirements } from "./x402-types.js";
 import type {
   MCPTool,
   ToolCallRequest,
@@ -24,12 +26,24 @@ export class X402MCPClient {
   private debug: boolean;
   private debugHandler: DebugHandler;
   private interceptors: Interceptors;
+  private x402Handler: X402Handler | null = null;
+  private autoPayment: boolean;
 
   constructor(options: X402MCPClientOptions) {
     this.serverUrl = options.serverUrl;
     this.debug = options.debug ?? false;
     this.debugHandler = options.debugHandler ?? createDefaultDebugHandler();
     this.interceptors = options.interceptors ?? {};
+    this.autoPayment = options.autoPayment ?? true;
+
+    // Initialize x402 handler if wallet address provided
+    if (options.walletAddress) {
+      this.x402Handler = new X402Handler({
+        walletAddress: options.walletAddress,
+        signPayment: options.signPayment,
+        autoRetry: this.autoPayment,
+      });
+    }
 
     this.client = new Client(
       { name: "x402-agent", version: "0.1.0" },
@@ -124,14 +138,15 @@ export class X402MCPClient {
 
   async callTool(
     name: string,
-    args: Record<string, unknown> = {}
+    args: Record<string, unknown> = {},
+    meta?: Record<string, unknown>
   ): Promise<ToolCallResponse> {
     if (!this.connected) {
       throw new Error("Not connected to MCP server");
     }
 
     const ctx = this.createContext();
-    let request: ToolCallRequest = { name, args };
+    let request: ToolCallRequest = { name, args, meta };
 
     // Run beforeToolCall interceptors
     if (this.interceptors.beforeToolCall) {
@@ -156,7 +171,7 @@ export class X402MCPClient {
 
     this.emit(
       "tool_call_start",
-      { name: request.name, args: request.args },
+      { name: request.name, args: request.args, meta: request.meta },
       ctx.requestId
     );
 
@@ -166,7 +181,9 @@ export class X402MCPClient {
       const result = await this.client.callTool({
         name: request.name,
         arguments: request.args,
-      });
+        // Include _meta if provided (for x402 payments)
+        ...(request.meta ? { _meta: request.meta } : {}),
+      } as Parameters<typeof this.client.callTool>[0]);
 
       const duration = Date.now() - startTime;
 
@@ -175,6 +192,31 @@ export class X402MCPClient {
         content: result.content,
         duration,
       };
+
+      // Check for x402 payment required in response
+      if (this.x402Handler) {
+        const paymentCheck = this.x402Handler.checkPaymentRequired(result.content);
+
+        if (paymentCheck.required) {
+          this.emit(
+            "x402_payment_required",
+            {
+              name: request.name,
+              requirements: paymentCheck.requirements
+            },
+            ctx.requestId
+          );
+
+          // If auto-payment is enabled, retry with payment
+          if (this.autoPayment) {
+            return this.retryWithPayment(request, paymentCheck.requirements, ctx, startTime);
+          }
+
+          // Otherwise, include payment info in response
+          response.paymentRequired = true;
+          response.content = paymentCheck.requirements;
+        }
+      }
 
       this.emit(
         "tool_call_end",
@@ -214,6 +256,72 @@ export class X402MCPClient {
       }
       throw error;
     }
+  }
+
+  /**
+   * Retry a tool call with x402 payment
+   */
+  private async retryWithPayment(
+    request: ToolCallRequest,
+    requirements: PaymentRequiredData,
+    ctx: InterceptorContext,
+    originalStartTime: number
+  ): Promise<ToolCallResponse> {
+    if (!this.x402Handler) {
+      throw new Error("x402 handler not configured");
+    }
+
+    this.emit(
+      "x402_payment_creating",
+      { name: request.name, requirements },
+      ctx.requestId
+    );
+
+    // Create payment payload
+    const paymentPayload = await this.x402Handler.createPaymentPayload(requirements);
+    const paymentMeta = this.x402Handler.createPaymentMeta(paymentPayload);
+
+    this.emit(
+      "x402_payment_sending",
+      { name: request.name, payment: paymentPayload },
+      ctx.requestId
+    );
+
+    // Retry the call with payment
+    const result = await this.client.callTool({
+      name: request.name,
+      arguments: request.args,
+      _meta: paymentMeta,
+    } as Parameters<typeof this.client.callTool>[0]);
+
+    const duration = Date.now() - originalStartTime;
+
+    const response: ToolCallResponse = {
+      name: request.name,
+      content: result.content,
+      duration,
+      paymentRequired: true,
+    };
+
+    // Check for payment response in meta
+    // TODO: Extract payment response from result._meta if available
+    // For now, assume success if we got a non-error response
+    const authorization = paymentPayload.payload.authorization as { from?: string } | undefined;
+    const paymentResponse = {
+      success: true,
+      network: requirements.accepts[0]?.network as `${string}:${string}`,
+      payer: authorization?.from ?? "",
+      transaction: "", // Synthetic - real implementation would get from server
+    };
+    response.paymentResponse = paymentResponse;
+
+    this.emit(
+      "x402_payment_success",
+      { name: request.name, response: paymentResponse },
+      ctx.requestId
+    );
+
+    return response;
   }
 
   isConnected(): boolean {

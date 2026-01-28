@@ -7,12 +7,18 @@ export interface MCPTool {
 export interface ToolCallRequest {
   name: string;
   args: Record<string, unknown>;
+  /** Optional _meta field for x402 payment payloads */
+  meta?: Record<string, unknown>;
 }
 
 export interface ToolCallResponse {
   name: string;
   content: unknown;
   duration: number;
+  /** Whether payment was required for this call */
+  paymentRequired?: boolean;
+  /** Payment response if payment was made */
+  paymentResponse?: import("./x402-types.js").PaymentResponse;
 }
 
 export interface InterceptorContext {
@@ -65,7 +71,12 @@ export interface DebugEvent {
     | "tool_call_end"
     | "interceptor_before"
     | "interceptor_after"
-    | "error";
+    | "error"
+    | "x402_payment_required"
+    | "x402_payment_creating"
+    | "x402_payment_sending"
+    | "x402_payment_success"
+    | "x402_payment_failed";
   data: Record<string, unknown>;
 }
 
@@ -76,4 +87,10 @@ export interface X402MCPClientOptions {
   debug?: boolean;
   debugHandler?: DebugHandler;
   interceptors?: Interceptors;
+  /** Wallet address for x402 payments */
+  walletAddress?: string;
+  /** Enable automatic payment retry when 402 is received */
+  autoPayment?: boolean;
+  /** Custom payment signer function */
+  signPayment?: (requirements: import("./x402-types.js").PaymentRequiredData) => Promise<string>;
 }
