@@ -1,15 +1,18 @@
 import "dotenv/config";
 import { X402MCPClient, type ToolCallRequest, type ToolCallResponse } from "x402-mcp";
 import { createWallet } from "./wallet.js";
-import { Agent } from "./agent.js";
+import { Agent, type ToolCallHistoryItem } from "./agent.js";
 import * as ui from "./ui.js";
 
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || "http://localhost:8080/mcp";
+const MCP_SERVER_URL =
+  process.env.MCP_SERVER_URL || "http://localhost:8003/v2/x402/mcp";
+const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "streamable-http";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const AGENT_GOAL = process.env.AGENT_GOAL || "Find available APIs and resources";
+const AGENT_GOAL = process.env.AGENT_GOAL || "Find out the weather";
 const DEBUG_MODE = process.env.DEBUG === "true";
 const TIMEOUT_MS = 20000;
+const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || "5");
 
 function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
   return Promise.race([
@@ -44,9 +47,10 @@ async function main() {
 
   const mcpClient = new X402MCPClient({
     serverUrl: MCP_SERVER_URL,
+    transport: MCP_TRANSPORT === "sse" ? "sse" : "streamable-http",
     debug: DEBUG_MODE,
-    // Enable x402 payment support with wallet address
-    walletAddress: wallet.address,
+    // Enable x402 payment support with EVM signer (real EIP-712 signing)
+    signer: wallet.account,
     autoPayment: true, // Automatically retry with payment on 402
     interceptors: {
       // Example: Log outgoing requests with wallet context
@@ -98,52 +102,81 @@ async function main() {
     tools.map((t) => `• ${t.name} - ${t.description || "No description"}`)
   );
 
-  // Step 4: Agent selects a tool
+  // Step 4+: Agent executes multiple steps until done
   ui.step("🤖", "Agent Analyzing Goal");
   ui.section("Goal", AGENT_GOAL);
 
   const agent = new Agent(ANTHROPIC_API_KEY);
-  const thinkingSpinner = ui.spinner("Agent is thinking...");
+  const history: ToolCallHistoryItem[] = [];
+  let done = false;
+  let finalSummary = "";
 
-  const selection = await withTimeout(
-    agent.selectTool(AGENT_GOAL, tools),
-    TIMEOUT_MS,
-    "Agent tool selection"
-  );
-  thinkingSpinner.stop();
-
-  ui.agentThought(selection.reason);
-  ui.section("Selected Tool", [
-    `Name: ${selection.toolName}`,
-    `Args: ${JSON.stringify(selection.args)}`,
-  ]);
-
-  // Step 5: Call the tool
-  ui.step("⚡", "Executing Tool");
-  const executeSpinner = ui.spinner(`Calling ${selection.toolName}...`);
-
-  try {
-    const response = await withTimeout(
-      mcpClient.callTool(selection.toolName, selection.args),
+  for (let step = 1; step <= MAX_TOOL_CALLS; step++) {
+    const thinkingSpinner = ui.spinner(`Agent is thinking (step ${step}/${MAX_TOOL_CALLS})...`);
+    const decision = await withTimeout(
+      agent.decideNextStep(AGENT_GOAL, tools, history),
       TIMEOUT_MS,
-      "Tool execution"
+      "Agent decision"
     );
-    executeSpinner.succeed(`Tool executed successfully`);
-    ui.json("Response", response.content);
+    thinkingSpinner.stop();
 
-    // Step 6: Summarize result
-    ui.step("📝", "Agent Summary");
+    ui.agentThought(decision.reason);
+
+    if (decision.action === "done") {
+      done = true;
+      finalSummary = decision.summary || "Goal completed.";
+      break;
+    }
+
+    if (!decision.toolName) {
+      ui.error("Agent did not provide a tool name.");
+      break;
+    }
+
+    ui.section("Selected Tool", [
+      `Name: ${decision.toolName}`,
+      `Args: ${JSON.stringify(decision.args || {})}`,
+    ]);
+
+    ui.step("⚡", `Executing Tool (step ${step})`);
+    const executeSpinner = ui.spinner(`Calling ${decision.toolName}...`);
+
+    try {
+      const response = await withTimeout(
+        mcpClient.callTool(decision.toolName, decision.args || {}),
+        TIMEOUT_MS,
+        "Tool execution"
+      );
+      executeSpinner.succeed(`Tool executed successfully`);
+      ui.json("Response", response.content);
+
+      history.push({
+        toolName: decision.toolName,
+        args: decision.args || {},
+        result: response.content,
+      });
+    } catch (err) {
+      executeSpinner.fail("Tool execution failed");
+      ui.error(err instanceof Error ? err.message : String(err));
+      break;
+    }
+  }
+
+  ui.step("📝", "Agent Summary");
+  if (done) {
+    ui.section("Result", finalSummary);
+  } else if (history.length > 0) {
     const summarySpinner = ui.spinner("Generating summary...");
+    const last = history[history.length - 1];
     const summary = await withTimeout(
-      agent.summarizeResult(AGENT_GOAL, selection.toolName, response.content),
+      agent.summarizeResult(AGENT_GOAL, last.toolName, last.result),
       TIMEOUT_MS,
       "Agent summary"
     );
     summarySpinner.stop();
     ui.section("Result", summary);
-  } catch (err) {
-    executeSpinner.fail("Tool execution failed");
-    ui.error(err instanceof Error ? err.message : String(err));
+  } else {
+    ui.section("Result", "No tool calls were completed.");
   }
 
   // Cleanup

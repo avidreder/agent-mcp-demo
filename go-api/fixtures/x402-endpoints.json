@@ -1,0 +1,69 @@
+{
+  "items": [
+    {
+      "accepts": [
+        {
+          "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          "description": "Get synthetic weather data for a city",
+          "extra": {
+            "name": "USDC",
+            "version": "2"
+          },
+          "maxAmountRequired": "10000",
+          "maxTimeoutSeconds": 300,
+          "mimeType": "application/json",
+          "network": "base-sepolia",
+          "outputSchema": {
+            "input": {
+              "method": "GET",
+              "queryParams": {
+                "city": "string"
+              },
+              "type": "http"
+            }
+          },
+          "payTo": "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+          "resource": "http://localhost:8080/weather",
+          "scheme": "exact"
+        }
+      ],
+      "lastUpdated": "2026-01-29T00:00:00.000Z",
+      "resource": "http://localhost:8080/weather",
+      "type": "http",
+      "x402Version": 1
+    },
+    {
+      "accepts": [
+        {
+          "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          "description": "Get synthetic restaurant suggestions by city and food",
+          "extra": {
+            "name": "USDC",
+            "version": "2"
+          },
+          "maxAmountRequired": "10000",
+          "maxTimeoutSeconds": 300,
+          "mimeType": "application/json",
+          "network": "base-sepolia",
+          "outputSchema": {
+            "input": {
+              "method": "POST",
+              "body": {
+                "city": "string",
+                "food": "string"
+              },
+              "type": "http"
+            }
+          },
+          "payTo": "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+          "resource": "http://localhost:8080/restaurants",
+          "scheme": "exact"
+        }
+      ],
+      "lastUpdated": "2026-01-29T00:00:00.000Z",
+      "resource": "http://localhost:8080/restaurants",
+      "type": "http",
+      "x402Version": 1
+    }
+  ]
+}

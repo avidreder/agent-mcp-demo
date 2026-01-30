@@ -4,12 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
+	x402mcp "github.com/andrewreder/agent-poc/go-api/x402"
+	x402sdk "github.com/coinbase/x402/go"
+	x402http "github.com/coinbase/x402/go/http"
+	ginmw "github.com/coinbase/x402/go/http/gin"
+	evmexact "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/andrewreder/agent-poc/go-api/x402"
 )
+
+const serverBaseURL = "http://localhost:8080"
 
 // Resource represents a discoverable resource
 type Resource struct {
@@ -39,6 +49,39 @@ var resources = []Resource{
 		Description: "Aggregated news from multiple sources",
 		URI:         "https://api.news.example/v1",
 	},
+}
+
+type X402OutputSchema struct {
+	Input X402InputSchema `json:"input"`
+}
+
+type X402InputSchema struct {
+	Method      string            `json:"method"`
+	QueryParams map[string]string `json:"queryParams,omitempty"`
+	Body        map[string]string `json:"body,omitempty"`
+	Type        string            `json:"type"`
+}
+
+type X402AcceptRequirement struct {
+	Asset             string            `json:"asset"`
+	Description       string            `json:"description"`
+	Extra             map[string]string `json:"extra"`
+	MaxAmountRequired string            `json:"maxAmountRequired"`
+	MaxTimeoutSeconds int               `json:"maxTimeoutSeconds"`
+	MimeType          string            `json:"mimeType"`
+	Network           string            `json:"network"`
+	OutputSchema      X402OutputSchema  `json:"outputSchema"`
+	PayTo             string            `json:"payTo"`
+	Resource          string            `json:"resource"`
+	Scheme            string            `json:"scheme"`
+}
+
+type X402EndpointEntry struct {
+	Accepts     []X402AcceptRequirement `json:"accepts"`
+	LastUpdated string                  `json:"lastUpdated"`
+	Resource    string                  `json:"resource"`
+	Type        string                  `json:"type"`
+	X402Version int                     `json:"x402Version"`
 }
 
 // Tool: Get weather for a location
@@ -105,6 +148,25 @@ func getNews(ctx context.Context, req *mcp.CallToolRequest, input GetNewsInput) 
 	}, nil
 }
 
+type WeatherResponse struct {
+	City        string  `json:"city"`
+	Temperature float64 `json:"temperature"`
+	Conditions  string  `json:"conditions"`
+	Unit        string  `json:"unit"`
+}
+
+type RestaurantRequest struct {
+	City string `json:"city"`
+	Food string `json:"food"`
+}
+
+type RestaurantResponse struct {
+	City        string   `json:"city"`
+	Food        string   `json:"food"`
+	Restaurants []string `json:"restaurants"`
+	Note        string   `json:"note"`
+}
+
 // Resource handler for MCP resources
 func resourceHandler(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
@@ -128,21 +190,29 @@ func resourceHandler(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.Re
 	return nil, fmt.Errorf("resource not found: %s", uri)
 }
 
-// x402 middleware instance (configured with synthetic payment details)
-// TODO: Load these from environment variables or config
-var x402Middleware = x402.NewMiddleware(
-	"http://localhost:8080",                               // Server URL
-	"0x1234567890abcdef1234567890abcdef12345678",          // TODO: Real payTo address
-	"eip155:84532",                                         // Base Sepolia testnet
-	"0x036CbD53842c5426634e7929541eC2318f3dCF7e",          // TODO: Real USDC contract address
+// getFacilitatorURL returns the facilitator URL from environment or default
+func getFacilitatorURL() string {
+	if url := os.Getenv("FACILITATOR_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:8003/v2/x402"
+}
+
+// x402 middleware instance configured for Base Sepolia with real facilitator
+// Price: 0.01 USDC per tool call
+var x402Middleware = x402mcp.NewMiddleware(
+	serverBaseURL, // Server URL
+	"0x8D170Db9aB247E7013d024566093E13dc7b0f181", // Payee address
+	"eip155:84532", // Base Sepolia testnet
+	"0x036CbD53842c5426634e7929541eC2318f3dCF7e", // USDC on Base Sepolia
+	getFacilitatorURL(),                          // Facilitator URL
 )
 
 func init() {
-	// Configure tool pricing
-	// TODO: Load pricing from config or database
-	x402Middleware.SetToolPrice("get_weather", "1000")      // 0.001 USDC (6 decimals)
-	x402Middleware.SetToolPrice("get_stock_quote", "5000")  // 0.005 USDC
-	x402Middleware.SetToolPrice("get_news", "2000")         // 0.002 USDC
+	// Configure tool pricing - 0.01 USDC = 10000 (6 decimals)
+	x402Middleware.SetToolPrice("get_weather", "10000")     // 0.01 USDC
+	x402Middleware.SetToolPrice("get_stock_quote", "10000") // 0.01 USDC
+	x402Middleware.SetToolPrice("get_news", "10000")        // 0.01 USDC
 }
 
 func createMCPServer() *mcp.Server {
@@ -165,17 +235,17 @@ func createMCPServer() *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_weather",
 		Description: "Get current weather for a location",
-	}, x402.WrapToolHandler(x402Middleware, "get_weather", getWeather))
+	}, x402mcp.WrapToolHandler(x402Middleware, "get_weather", getWeather))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stock_quote",
 		Description: "Get the current stock price for a ticker symbol",
-	}, x402.WrapToolHandler(x402Middleware, "get_stock_quote", getStockQuote))
+	}, x402mcp.WrapToolHandler(x402Middleware, "get_stock_quote", getStockQuote))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_news",
 		Description: "Get latest news headlines for a topic",
-	}, x402.WrapToolHandler(x402Middleware, "get_news", getNews))
+	}, x402mcp.WrapToolHandler(x402Middleware, "get_news", getNews))
 
 	return server
 }
@@ -183,11 +253,225 @@ func createMCPServer() *mcp.Server {
 func main() {
 	r := gin.Default()
 
+	// Debug: log payment headers for protected endpoints (toy repo)
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/weather") || strings.HasPrefix(c.Request.URL.Path, "/restaurants") {
+			log.Printf("x402 request headers (method=%s path=%s): %+v", c.Request.Method, c.Request.URL.Path, c.Request.Header)
+		}
+		c.Next()
+	})
+
+	// Protect HTTP endpoints with x402 payment middleware
+	unpaidJSON := func(message string) x402http.UnpaidResponseBodyFunc {
+		return func(ctx context.Context, reqCtx x402http.HTTPRequestContext) (*x402http.UnpaidResponse, error) {
+			return &x402http.UnpaidResponse{
+				ContentType: "application/json",
+				Body: map[string]string{
+					"error": message,
+					"hint":  "See PAYMENT-REQUIRED header for details",
+				},
+			}, nil
+		}
+	}
+
+	paymentRoutes := x402http.RoutesConfig{
+		"GET /weather": {
+			Accepts: []x402http.PaymentOption{
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("eip155:84532"),
+					MaxTimeoutSeconds: 300,
+				},
+			},
+			Resource:           fmt.Sprintf("%s/weather", serverBaseURL),
+			Description:        "Get synthetic weather data for a city",
+			MimeType:           "application/json",
+			UnpaidResponseBody: unpaidJSON("Payment required to access /weather"),
+		},
+		"POST /restaurants": {
+			Accepts: []x402http.PaymentOption{
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("eip155:84532"),
+					MaxTimeoutSeconds: 300,
+				},
+			},
+			Resource:           fmt.Sprintf("%s/restaurants", serverBaseURL),
+			Description:        "Get synthetic restaurant suggestions by city and food",
+			MimeType:           "application/json",
+			UnpaidResponseBody: unpaidJSON("Payment required to access /restaurants"),
+		},
+	}
+
+	facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: getFacilitatorURL(),
+	})
+
+	r.Use(ginmw.PaymentMiddlewareFromConfig(
+		paymentRoutes,
+		ginmw.WithFacilitatorClient(facilitator),
+		ginmw.WithScheme(x402sdk.Network("eip155:84532"), evmexact.NewExactEvmScheme()),
+		ginmw.WithErrorHandler(func(c *gin.Context, err error) {
+			log.Printf("x402 payment error: %v (method=%s path=%s)", err, c.Request.Method, c.Request.URL.Path)
+			log.Printf("x402 payment-signature header: %q", c.Request.Header.Get("PAYMENT-SIGNATURE"))
+		}),
+		ginmw.WithSettlementHandler(func(c *gin.Context, settlement *x402sdk.SettleResponse) {
+			log.Printf(
+				"x402 payment settled (method=%s path=%s network=%s success=%t)",
+				c.Request.Method,
+				c.Request.URL.Path,
+				settlement.Network,
+				settlement.Success,
+			)
+		}),
+	))
+
 	// REST API endpoint
 	// GET /discovery/resources - Returns list of available resources
 	r.GET("/discovery/resources", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"resources": resources,
+		})
+	})
+
+	// GET /discovery/x402 - Returns x402 entries for available HTTP endpoints
+	r.GET("/discovery/x402", func(c *gin.Context) {
+		lastUpdated := time.Now().UTC().Format(time.RFC3339Nano)
+		entries := []X402EndpointEntry{
+			{
+				Accepts: []X402AcceptRequirement{
+					{
+						Asset:       "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+						Description: "Get synthetic weather data for a city",
+						Extra: map[string]string{
+							"name":    "USDC",
+							"version": "2",
+						},
+						MaxAmountRequired: "10000",
+						MaxTimeoutSeconds: 300,
+						MimeType:          "application/json",
+						Network:           "base-sepolia",
+						OutputSchema: X402OutputSchema{
+							Input: X402InputSchema{
+								Method: "GET",
+								QueryParams: map[string]string{
+									"city": "string",
+								},
+								Type: "http",
+							},
+						},
+						PayTo:    "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+						Resource: fmt.Sprintf("%s/weather", serverBaseURL),
+						Scheme:   "exact",
+					},
+				},
+				LastUpdated: lastUpdated,
+				Resource:    fmt.Sprintf("%s/weather", serverBaseURL),
+				Type:        "http",
+				X402Version: 1,
+			},
+			{
+				Accepts: []X402AcceptRequirement{
+					{
+						Asset:       "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+						Description: "Get synthetic restaurant suggestions by city and food",
+						Extra: map[string]string{
+							"name":    "USDC",
+							"version": "2",
+						},
+						MaxAmountRequired: "10000",
+						MaxTimeoutSeconds: 300,
+						MimeType:          "application/json",
+						Network:           "base-sepolia",
+						OutputSchema: X402OutputSchema{
+							Input: X402InputSchema{
+								Method: "POST",
+								Body: map[string]string{
+									"city": "string",
+									"food": "string",
+								},
+								Type: "http",
+							},
+						},
+						PayTo:    "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+						Resource: fmt.Sprintf("%s/restaurants", serverBaseURL),
+						Scheme:   "exact",
+					},
+				},
+				LastUpdated: lastUpdated,
+				Resource:    fmt.Sprintf("%s/restaurants", serverBaseURL),
+				Type:        "http",
+				X402Version: 1,
+			},
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"entries": entries,
+		})
+	})
+
+	// GET /weather?city=CityName - Returns synthetic weather data
+	r.GET("/weather", func(c *gin.Context) {
+		city := c.Query("city")
+		if city == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "city query param is required",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, WeatherResponse{
+			City:        city,
+			Temperature: 71.2,
+			Conditions:  "Partly cloudy",
+			Unit:        "fahrenheit",
+		})
+	})
+
+	// POST /restaurants - Body: { "city": "...", "food": "..." }
+	// Returns synthetic restaurant suggestions
+	r.POST("/restaurants", func(c *gin.Context) {
+		var req RestaurantRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "invalid JSON body",
+			})
+			return
+		}
+		if req.City == "" || req.Food == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "city and food are required",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, RestaurantResponse{
+			City: req.City,
+			Food: req.Food,
+			Restaurants: []string{
+				fmt.Sprintf("%s %s House", req.City, req.Food),
+				fmt.Sprintf("%s %s Bistro", req.City, req.Food),
+				fmt.Sprintf("%s %s Kitchen", req.City, req.Food),
+			},
+			Note: "Synthetic recommendations for demo purposes",
 		})
 	})
 

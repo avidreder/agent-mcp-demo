@@ -2,11 +2,10 @@ package x402
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	x402http "github.com/coinbase/x402/go/http"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -15,21 +14,30 @@ type ToolPricing map[string]ToolPricingConfig
 
 // Middleware wraps MCP tool handlers with x402 payment verification
 type Middleware struct {
-	pricing   ToolPricing
-	payToAddr string
-	network   Network
-	asset     string
-	serverURL string
+	pricing          ToolPricing
+	payToAddr        string
+	network          Network
+	asset            string
+	serverURL        string
+	facilitatorURL   string
+	facilitator      *x402http.HTTPFacilitatorClient
 }
 
 // NewMiddleware creates a new x402 middleware instance
-func NewMiddleware(serverURL, payToAddr string, network Network, asset string) *Middleware {
+func NewMiddleware(serverURL, payToAddr string, network Network, asset, facilitatorURL string) *Middleware {
+	// Create facilitator client
+	facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: facilitatorURL,
+	})
+
 	return &Middleware{
-		pricing:   make(ToolPricing),
-		payToAddr: payToAddr,
-		network:   network,
-		asset:     asset,
-		serverURL: serverURL,
+		pricing:        make(ToolPricing),
+		payToAddr:      payToAddr,
+		network:        network,
+		asset:          asset,
+		serverURL:      serverURL,
+		facilitatorURL: facilitatorURL,
+		facilitator:    facilitator,
 	}
 }
 
@@ -68,24 +76,22 @@ func (m *Middleware) GetPaymentRequirements(toolName string) *PaymentRequiredDat
 				PayTo:             pricing.PayTo,
 				MaxTimeoutSeconds: 60,
 				Extra: map[string]interface{}{
-					"name":    "x402-mcp-server",
-					"version": "0.1.0",
+					"name":    "USDC",
+					"version": "2",
 				},
 			},
 		},
 	}
 }
 
-// ValidatePayment checks if the payment in _meta is valid
-// Uses official x402 types for parsing
-// TODO: Integrate with x402ResourceServer for actual verification via facilitator
-func (m *Middleware) ValidatePayment(toolName string, meta map[string]interface{}) (*PaymentPayload, error) {
+// VerifyPayment validates a payment using the facilitator
+func (m *Middleware) VerifyPayment(ctx context.Context, toolName string, meta map[string]interface{}) (*PaymentPayload, error) {
 	paymentData, ok := meta[MetaKeyPayment]
 	if !ok {
 		return nil, nil // No payment provided
 	}
 
-	// Parse the payment payload using official types
+	// Parse the payment payload
 	paymentBytes, err := json.Marshal(paymentData)
 	if err != nil {
 		return nil, fmt.Errorf("invalid payment format: %w", err)
@@ -96,77 +102,51 @@ func (m *Middleware) ValidatePayment(toolName string, meta map[string]interface{
 		return nil, fmt.Errorf("failed to parse payment: %w", err)
 	}
 
-	// Decode the signature using standard base64
-	signature, ok := payment.Payload["signature"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing signature in payment payload")
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(signature)
-	if err != nil {
-		return nil, fmt.Errorf("invalid signature encoding: %w", err)
-	}
-
-	// Parse the decoded requirements to verify they match
-	var decodedReqs PaymentRequiredData
-	if err := json.Unmarshal(decoded, &decodedReqs); err != nil {
-		return nil, fmt.Errorf("invalid signature content: %w", err)
-	}
-
-	// Verify the payment matches our requirements
+	// Get expected requirements
 	expectedReqs := m.GetPaymentRequirements(toolName)
 	if expectedReqs == nil {
 		return &payment, nil // Tool is free, payment not required
 	}
 
-	// Validate using official x402 DeepEqual
-	if len(decodedReqs.Accepts) == 0 {
-		return nil, fmt.Errorf("payment does not include any accepted schemes")
+	// Marshal requirements for facilitator
+	requirementsBytes, err := json.Marshal(expectedReqs.Accepts[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal requirements: %w", err)
 	}
 
-	// Use official x402 comparison for requirements matching
-	if len(expectedReqs.Accepts) > 0 && len(decodedReqs.Accepts) > 0 {
-		expected := expectedReqs.Accepts[0]
-		decoded := decodedReqs.Accepts[0]
+	// Verify payment using facilitator
+	verifyResp, err := m.facilitator.Verify(ctx, paymentBytes, requirementsBytes)
+	if err != nil {
+		return nil, fmt.Errorf("payment verification failed: %w", err)
+	}
 
-		// Verify critical fields match
-		if decoded.Network != expected.Network {
-			return nil, fmt.Errorf("network mismatch: expected %s, got %s", expected.Network, decoded.Network)
-		}
-		if decoded.Asset != expected.Asset {
-			return nil, fmt.Errorf("asset mismatch: expected %s, got %s", expected.Asset, decoded.Asset)
-		}
-		if decoded.PayTo != expected.PayTo {
-			return nil, fmt.Errorf("payTo mismatch: expected %s, got %s", expected.PayTo, decoded.PayTo)
-		}
-		// Amount verification would typically be >= expected
+	if !verifyResp.IsValid {
+		return nil, fmt.Errorf("payment invalid: %s", verifyResp.InvalidReason)
 	}
 
 	return &payment, nil
 }
 
-// CreatePaymentResponse creates a payment response for the _meta field
-// Uses official x402 SettleResponse type
-func (m *Middleware) CreatePaymentResponse(payment *PaymentPayload, success bool, errorReason string) *SettleResponse {
-	resp := &SettleResponse{
-		Success:     success,
-		Network:     Network(payment.Accepted.Network),
-		ErrorReason: errorReason,
+// SettlePayment settles a payment using the facilitator
+func (m *Middleware) SettlePayment(ctx context.Context, payment *PaymentPayload, requirements *PaymentRequirements) (*SettleResponse, error) {
+	// Marshal payment and requirements
+	payloadBytes, err := json.Marshal(payment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payment: %w", err)
 	}
 
-	// Extract payer from payload if available
-	if auth, ok := payment.Payload["authorization"].(map[string]interface{}); ok {
-		if from, ok := auth["from"].(string); ok {
-			resp.Payer = from
-		}
+	requirementsBytes, err := json.Marshal(requirements)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal requirements: %w", err)
 	}
 
-	if success {
-		// TODO: Submit actual blockchain transaction and get hash
-		resp.Transaction = fmt.Sprintf("0x%x", time.Now().UnixNano()) // Synthetic transaction hash
+	// Settle payment using facilitator
+	settleResp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+	if err != nil {
+		return nil, fmt.Errorf("payment settlement failed: %w", err)
 	}
 
-	return resp
+	return settleResp, nil
 }
 
 // WrapToolHandler wraps an MCP tool handler with x402 payment verification
@@ -188,22 +168,23 @@ func WrapToolHandler[In, Out any](
 		// Extract _meta from the request
 		meta := extractMeta(req)
 
-		// Validate payment if provided
-		payment, err := m.ValidatePayment(toolName, meta)
+		// Verify payment using facilitator
+		payment, err := m.VerifyPayment(ctx, toolName, meta)
 		if err != nil {
 			// Invalid payment - return 402 with error
 			return &mcp.CallToolResult{
 				IsError: true,
 				Content: []mcp.Content{
 					&mcp.TextContent{
-						Text: fmt.Sprintf("Payment validation failed: %s", err.Error()),
+						Text: fmt.Sprintf("Payment verification failed: %s", err.Error()),
 					},
 				},
 				Meta: map[string]interface{}{
-					MetaKeyPaymentResponse: m.CreatePaymentResponse(&PaymentPayload{
-						Accepted: pricing.Accepts[0],
-						Payload:  make(map[string]interface{}),
-					}, false, err.Error()),
+					MetaKeyPaymentResponse: &SettleResponse{
+						Success:     false,
+						Network:     m.network,
+						ErrorReason: err.Error(),
+					},
 				},
 			}, zero, nil
 		}
@@ -224,7 +205,41 @@ func WrapToolHandler[In, Out any](
 			}, zero, nil
 		}
 
-		// Payment is valid - execute the tool
+		// Payment verified - settle it
+		settleResp, err := m.SettlePayment(ctx, payment, &pricing.Accepts[0])
+		if err != nil {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{
+					&mcp.TextContent{
+						Text: fmt.Sprintf("Payment settlement failed: %s", err.Error()),
+					},
+				},
+				Meta: map[string]interface{}{
+					MetaKeyPaymentResponse: &SettleResponse{
+						Success:     false,
+						Network:     m.network,
+						ErrorReason: err.Error(),
+					},
+				},
+			}, zero, nil
+		}
+
+		if !settleResp.Success {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{
+					&mcp.TextContent{
+						Text: fmt.Sprintf("Payment settlement failed: %s", settleResp.ErrorReason),
+					},
+				},
+				Meta: map[string]interface{}{
+					MetaKeyPaymentResponse: settleResp,
+				},
+			}, zero, nil
+		}
+
+		// Payment settled - execute the tool
 		result, out, err := handler(ctx, req, input)
 		if err != nil {
 			return result, out, err
@@ -237,7 +252,7 @@ func WrapToolHandler[In, Out any](
 		if result.Meta == nil {
 			result.Meta = make(map[string]interface{})
 		}
-		result.Meta[MetaKeyPaymentResponse] = m.CreatePaymentResponse(payment, true, "")
+		result.Meta[MetaKeyPaymentResponse] = settleResp
 
 		return result, out, nil
 	}
@@ -255,4 +270,3 @@ func extractMeta(req *mcp.CallToolRequest) map[string]interface{} {
 	}
 	return result
 }
-

@@ -15,6 +15,8 @@ export type {
   DebugEvent,
   DebugHandler,
   X402MCPClientOptions,
+  MCPTransport,
+  ClientEvmSigner,
 } from "./types.js";
 export type {
   // Official x402 types re-exported

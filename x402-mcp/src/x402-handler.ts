@@ -1,14 +1,15 @@
 /**
  * X402 Payment Handler for MCP Client
- * Uses official @x402/core types and utilities
+ * Uses official @x402/core and @x402/evm for real EVM payment signing
  * Detects 402 payment requirements and handles payment flow
  */
 
+import { x402Client } from "@x402/core/client";
 import type {
   PaymentPayload,
   PaymentRequirements,
 } from "@x402/core/types";
-import { safeBase64Encode } from "@x402/core/utils";
+import { ExactEvmScheme, type ClientEvmSigner } from "@x402/evm";
 import type {
   ResourceInfo,
   PaymentRequiredData,
@@ -16,7 +17,6 @@ import type {
   PaymentCheckResult,
 } from "./x402-types.js";
 import {
-  X402_VERSION,
   META_KEY_PAYMENT,
   META_KEY_PAYMENT_REQUIRED,
   META_KEY_PAYMENT_RESPONSE,
@@ -28,11 +28,8 @@ import {
  * Configuration for the X402 payment handler
  */
 export interface X402HandlerConfig {
-  /** Wallet address for payment authorization */
-  walletAddress: string;
-
-  /** Callback to sign payment authorization (optional for simplified mode) */
-  signPayment?: (requirements: PaymentRequiredData) => Promise<string>;
+  /** EVM signer for payment authorization (viem account) */
+  signer: ClientEvmSigner;
 
   /** Enable auto-retry with payment when 402 is detected */
   autoRetry?: boolean;
@@ -50,12 +47,24 @@ export interface X402HandlerConfig {
 /**
  * X402 Payment Handler
  * Handles x402 payment detection and payload creation for MCP
+ * Uses official @x402/evm ExactEvmScheme for real EIP-712 signing
  */
 export class X402Handler {
   private config: X402HandlerConfig;
+  private x402Client: x402Client;
+  private evmScheme: ExactEvmScheme;
 
   constructor(config: X402HandlerConfig) {
     this.config = config;
+
+    // Create the EVM scheme with the signer
+    this.evmScheme = new ExactEvmScheme(config.signer);
+
+    // Create x402 client and register the EVM scheme for EVM and legacy networks
+    this.x402Client = new x402Client();
+    this.x402Client.register("eip155:*" as `${string}:${string}`, this.evmScheme);
+    this.x402Client.register("base-sepolia" as `${string}:${string}`, this.evmScheme);
+    this.x402Client.register("base" as `${string}:${string}`, this.evmScheme);
   }
 
   /**
@@ -120,71 +129,24 @@ export class X402Handler {
   }
 
   /**
-   * Create a payment payload using official x402 types
-   * TODO: Integrate with x402Client for actual wallet signing
-   * For now, base64 encodes the payment requirements as simplified "signature"
+   * Create a payment payload using official x402 EVM signing
+   * Uses EIP-712 typed data signing for real blockchain-verifiable payments
    */
   async createPaymentPayload(requirements: PaymentRequiredData): Promise<PaymentPayload> {
-    // Select the first accepted payment scheme
-    // TODO: Use x402Client.selectPaymentRequirements() for proper selection
-    const selectedScheme = requirements.accepts[0];
-    if (!selectedScheme) {
-      throw new Error("No payment schemes available");
-    }
-
-    // Create resource info from requirements
-    const resource: ResourceInfo = requirements.resource;
-
-    // Create signature
-    // TODO: Implement actual EIP-712 or EIP-3009 signing via SchemeNetworkClient
-    // For simplified mode, we base64 encode the requirements as "signature"
-    let signature: string;
-    if (this.config.signPayment) {
-      signature = await this.config.signPayment(requirements);
-    } else {
-      // Simplified mode: base64 encode the requirements as "signature"
-      signature = safeBase64Encode(JSON.stringify(requirements));
-    }
-
-    // Build the accepted requirements (PaymentRequirements type from @x402/core)
-    const accepted: PaymentRequirements = {
-      scheme: selectedScheme.scheme,
-      network: selectedScheme.network,
-      asset: selectedScheme.asset,
-      amount: selectedScheme.amount,
-      payTo: selectedScheme.payTo,
-      maxTimeoutSeconds: selectedScheme.maxTimeoutSeconds,
-      extra: selectedScheme.extra ?? {},
+    // Convert PaymentRequiredData to PaymentRequired format expected by x402Client
+    const paymentRequired = {
+      x402Version: requirements.x402Version,
+      error: requirements.error,
+      resource: requirements.resource,
+      accepts: requirements.accepts,
+      extensions: requirements.extensions,
     };
 
-    // Create the payment payload using official types
-    const payload: PaymentPayload = {
-      x402Version: X402_VERSION,
-      resource,
-      accepted,
-      payload: {
-        signature,
-        // Authorization is embedded in the signature for simplified mode
-        // Real implementations would have separate authorization object
-        authorization: {
-          from: this.config.walletAddress,
-          to: selectedScheme.payTo,
-          value: selectedScheme.amount,
-          validAfter: Math.floor(Date.now() / 1000).toString(),
-          validBefore: (Math.floor(Date.now() / 1000) + selectedScheme.maxTimeoutSeconds).toString(),
-          nonce: `0x${Math.random().toString(16).substring(2)}`,
-        },
-      },
-    };
+    // Use x402Client to create the payment payload
+    // This handles scheme selection and calls the ExactEvmScheme for EIP-712 signing
+    const payload = await this.x402Client.createPaymentPayload(paymentRequired);
 
     return payload;
-  }
-
-  /**
-   * Encode payment payload for MCP _meta field using base64
-   */
-  encodePaymentForMeta(paymentPayload: PaymentPayload): string {
-    return safeBase64Encode(JSON.stringify(paymentPayload));
   }
 
   /**
@@ -192,7 +154,12 @@ export class X402Handler {
    */
   createPaymentMeta(paymentPayload: PaymentPayload): Record<string, unknown> {
     return {
-      [META_KEY_PAYMENT]: paymentPayload,
+      [META_KEY_PAYMENT]: {
+        x402Version: paymentPayload.x402Version,
+        resource: paymentPayload.resource,
+        accepted: paymentPayload.accepted,
+        payload: paymentPayload.payload,
+      },
     };
   }
 
@@ -200,13 +167,13 @@ export class X402Handler {
    * Get the wallet address
    */
   getWalletAddress(): string {
-    return this.config.walletAddress;
+    return this.config.signer.address;
   }
 }
 
 /**
- * Create an X402 handler with default configuration
+ * Create an X402 handler with an EVM signer
  */
-export function createX402Handler(walletAddress: string): X402Handler {
-  return new X402Handler({ walletAddress });
+export function createX402Handler(signer: ClientEvmSigner): X402Handler {
+  return new X402Handler({ signer });
 }

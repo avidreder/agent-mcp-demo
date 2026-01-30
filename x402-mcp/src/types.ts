@@ -1,3 +1,5 @@
+import type { ClientEvmSigner } from "@x402/evm";
+
 export interface MCPTool {
   name: string;
   description?: string;
@@ -82,15 +84,20 @@ export interface DebugEvent {
 
 export type DebugHandler = (event: DebugEvent) => void;
 
+export type MCPTransport = "sse" | "streamable-http";
+
 export interface X402MCPClientOptions {
   serverUrl: string;
+  /** Transport to use when connecting to MCP server */
+  transport?: MCPTransport;
   debug?: boolean;
   debugHandler?: DebugHandler;
   interceptors?: Interceptors;
-  /** Wallet address for x402 payments */
-  walletAddress?: string;
+  /** EVM signer for x402 payments (viem account) */
+  signer?: ClientEvmSigner;
   /** Enable automatic payment retry when 402 is received */
   autoPayment?: boolean;
-  /** Custom payment signer function */
-  signPayment?: (requirements: import("./x402-types.js").PaymentRequiredData) => Promise<string>;
 }
+
+// Re-export ClientEvmSigner for convenience
+export type { ClientEvmSigner };

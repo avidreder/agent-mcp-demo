@@ -1,8 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createDefaultDebugHandler } from "./debug.js";
 import { X402Handler } from "./x402-handler.js";
-import type { PaymentRequiredData, PaymentRequirements } from "./x402-types.js";
+import type { PaymentCheckResult, PaymentRequiredData } from "./x402-types.js";
+import { isPaymentRequired } from "./x402-types.js";
 import type {
   MCPTool,
   ToolCallRequest,
@@ -12,6 +14,7 @@ import type {
   DebugEvent,
   DebugHandler,
   X402MCPClientOptions,
+  MCPTransport,
 } from "./types.js";
 
 function generateRequestId(): string {
@@ -20,8 +23,9 @@ function generateRequestId(): string {
 
 export class X402MCPClient {
   private client: Client;
-  private transport: SSEClientTransport | null = null;
+  private transport: SSEClientTransport | StreamableHTTPClientTransport | null = null;
   private serverUrl: string;
+  private transportType: MCPTransport;
   private connected = false;
   private debug: boolean;
   private debugHandler: DebugHandler;
@@ -31,16 +35,16 @@ export class X402MCPClient {
 
   constructor(options: X402MCPClientOptions) {
     this.serverUrl = options.serverUrl;
+    this.transportType = options.transport ?? "sse";
     this.debug = options.debug ?? false;
     this.debugHandler = options.debugHandler ?? createDefaultDebugHandler();
     this.interceptors = options.interceptors ?? {};
     this.autoPayment = options.autoPayment ?? true;
 
-    // Initialize x402 handler if wallet address provided
-    if (options.walletAddress) {
+    // Initialize x402 handler if signer provided
+    if (options.signer) {
       this.x402Handler = new X402Handler({
-        walletAddress: options.walletAddress,
-        signPayment: options.signPayment,
+        signer: options.signer,
         autoRetry: this.autoPayment,
       });
     }
@@ -76,7 +80,10 @@ export class X402MCPClient {
     const ctx = this.createContext();
     try {
       const url = new URL(this.serverUrl);
-      this.transport = new SSEClientTransport(url);
+      this.transport =
+        this.transportType === "streamable-http"
+          ? new StreamableHTTPClientTransport(url)
+          : new SSEClientTransport(url);
       await this.client.connect(this.transport);
       this.connected = true;
 
@@ -195,7 +202,11 @@ export class X402MCPClient {
 
       // Check for x402 payment required in response
       if (this.x402Handler) {
-        const paymentCheck = this.x402Handler.checkPaymentRequired(result.content);
+        let paymentCheck = this.x402Handler.checkPaymentRequired(result.content);
+
+        if (!paymentCheck.required) {
+          paymentCheck = this.checkPaymentRequiredFromProxyResponse(result.content);
+        }
 
         if (paymentCheck.required) {
           this.emit(
@@ -256,6 +267,56 @@ export class X402MCPClient {
       }
       throw error;
     }
+  }
+
+  private checkPaymentRequiredFromProxyResponse(content: unknown): PaymentCheckResult {
+    const textItems = Array.isArray(content)
+      ? content.filter(
+          (item): item is { type: "text"; text: string } =>
+            Boolean(item) &&
+            typeof item === "object" &&
+            "type" in item &&
+            (item as { type?: string }).type === "text" &&
+            typeof (item as { text?: string }).text === "string"
+        )
+      : [];
+
+    for (const item of textItems) {
+      try {
+        const parsed = JSON.parse(item.text) as {
+          status?: number;
+          headers?: Record<string, string[] | string>;
+        };
+
+        if (!parsed.headers) {
+          continue;
+        }
+
+        const headerKey = Object.keys(parsed.headers).find(
+          (key) => key.toLowerCase() === "payment-required"
+        );
+        if (!headerKey) {
+          continue;
+        }
+
+        const rawHeader = parsed.headers[headerKey];
+        const encoded = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+        if (!encoded || typeof encoded !== "string") {
+          continue;
+        }
+
+        const decoded = Buffer.from(encoded, "base64").toString("utf8");
+        const paymentRequired = JSON.parse(decoded);
+
+        if (isPaymentRequired(paymentRequired)) {
+          return { required: true, requirements: paymentRequired };
+        }
+      } catch {
+        // Ignore parse errors and keep searching
+      }
+    }
+
+    return { required: false };
   }
 
   /**
