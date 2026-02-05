@@ -12,9 +12,12 @@ import (
 
 	x402mcp "github.com/andrewreder/agent-poc/go-api/x402"
 	x402sdk "github.com/coinbase/x402/go"
+	"github.com/coinbase/x402/go/extensions/bazaar"
+	"github.com/coinbase/x402/go/extensions/types"
 	x402http "github.com/coinbase/x402/go/http"
 	ginmw "github.com/coinbase/x402/go/http/gin"
 	evmexact "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	solanaexact "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -256,7 +259,8 @@ func main() {
 	// Debug: log payment headers for protected endpoints (toy repo)
 	r.Use(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/weather") || strings.HasPrefix(c.Request.URL.Path, "/restaurants") {
-			log.Printf("x402 request headers (method=%s path=%s): %+v", c.Request.Method, c.Request.URL.Path, c.Request.Header)
+			log.Printf("Headers: %+v", c.Request.Header)
+			// log.Printf("x402 request headers (method=%s path=%s): %+v", c.Request.Method, c.Request.URL.Path, c.Request.Header)
 		}
 		c.Next()
 	})
@@ -274,21 +278,148 @@ func main() {
 		}
 	}
 
+	discoveryExtension, err := bazaar.DeclareDiscoveryExtension(
+		bazaar.MethodGET,
+		map[string]interface{}{"city": "San Francisco"}, // Example query params
+		types.JSONSchema{
+			"properties": map[string]interface{}{
+				"city": map[string]interface{}{
+					"type":        "string",
+					"description": "City name to get weather for",
+				},
+			},
+			"required": []string{"city"},
+		},
+		"", // No body for GET request
+		&types.OutputConfig{
+			Example: map[string]interface{}{
+				"city":        "San Francisco",
+				"temperature": 71.2,
+				"conditions":  "Partly cloudy",
+				"unit":        "fahrenheit",
+			},
+			Schema: types.JSONSchema{
+				"properties": map[string]interface{}{
+					"city":        map[string]interface{}{"type": "string"},
+					"temperature": map[string]interface{}{"type": "number"},
+					"conditions":  map[string]interface{}{"type": "string"},
+					"unit":        map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"city", "temperature", "conditions", "unit"},
+			},
+		},
+	)
+	if err != nil {
+		fmt.Printf("❌ Failed to create bazaar extension: %v\n", err)
+		os.Exit(1)
+	}
+
 	paymentRoutes := x402http.RoutesConfig{
 		"GET /weather": {
 			Accepts: []x402http.PaymentOption{
+				// Base Sepolia USDC
 				{
 					Scheme: "exact",
 					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
 					Price: map[string]interface{}{
-						"amount": "10000",
-						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+						"amount": "1000",                                       // 0.001 USDC (6 decimals)
+						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia USDC
 						"extra": map[string]interface{}{
 							"name":    "USDC",
 							"version": "2",
 						},
 					},
 					Network:           x402sdk.Network("eip155:84532"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Base Sepolia random token
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "1000",                                       // 0.001 USDC (6 decimals)
+						"asset":  "0x046CbD53842c5426634e7929541eC2318f3dCF7e", // random token
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("eip155:84532"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Base mainnet USDC
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("eip155:8453"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Base mainnet random token
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "0x993589fcd6edb6e08f4c7c32d4f71b54bda02913",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("eip155:8453"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Solana USDC
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Solana random token
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "FPjFFdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+					MaxTimeoutSeconds: 300,
+				},
+				// Solana Devnet USDC
+				{
+					Scheme: "exact",
+					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+					Price: map[string]interface{}{
+						"amount": "10000",
+						"asset":  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+						"extra": map[string]interface{}{
+							"name":    "USDC",
+							"version": "2",
+						},
+					},
+					Network:           x402sdk.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
 					MaxTimeoutSeconds: 300,
 				},
 			},
@@ -296,44 +427,76 @@ func main() {
 			Description:        "Get synthetic weather data for a city",
 			MimeType:           "application/json",
 			UnpaidResponseBody: unpaidJSON("Payment required to access /weather"),
-		},
-		"POST /restaurants": {
-			Accepts: []x402http.PaymentOption{
-				{
-					Scheme: "exact",
-					PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
-					Price: map[string]interface{}{
-						"amount": "10000",
-						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-						"extra": map[string]interface{}{
-							"name":    "USDC",
-							"version": "2",
-						},
-					},
-					Network:           x402sdk.Network("eip155:84532"),
-					MaxTimeoutSeconds: 300,
-				},
+			Extensions: map[string]interface{}{
+				types.BAZAAR: discoveryExtension,
 			},
-			Resource:           fmt.Sprintf("%s/restaurants", serverBaseURL),
-			Description:        "Get synthetic restaurant suggestions by city and food",
-			MimeType:           "application/json",
-			UnpaidResponseBody: unpaidJSON("Payment required to access /restaurants"),
 		},
+		// "POST /restaurants": {
+		// 	Accepts: []x402http.PaymentOption{
+		// 		{
+		// 			Scheme: "exact",
+		// 			PayTo:  "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
+		// 			Price: map[string]interface{}{
+		// 				"amount": "10000",
+		// 				"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		// 				"extra": map[string]interface{}{
+		// 					"name":    "USDC",
+		// 					"version": "2",
+		// 				},
+		// 			},
+		// 			Network:           x402sdk.Network("eip155:84532"),
+		// 			MaxTimeoutSeconds: 300,
+		// 		},
+		// 	},
+		// 	Resource:           fmt.Sprintf("%s/restaurants", serverBaseURL),
+		// 	Description:        "Get synthetic restaurant suggestions by city and food",
+		// 	MimeType:           "application/json",
+		// 	UnpaidResponseBody: unpaidJSON("Payment required to access /restaurants"),
+		// 	Extensions: map[string]interface{}{
+		// 		types.BAZAAR: discoveryExtension,
+		// 	},
+		// },
 	}
 
 	facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
 		URL: getFacilitatorURL(),
 	})
 
-	r.Use(ginmw.PaymentMiddlewareFromConfig(
-		paymentRoutes,
-		ginmw.WithFacilitatorClient(facilitator),
-		ginmw.WithScheme(x402sdk.Network("eip155:84532"), evmexact.NewExactEvmScheme()),
-		ginmw.WithErrorHandler(func(c *gin.Context, err error) {
+	r.Use(ginmw.X402Payment(ginmw.Config{
+		Routes:      paymentRoutes,
+		Facilitator: facilitator,
+		Schemes: []ginmw.SchemeConfig{
+			{
+				Network: x402sdk.Network("eip155:84532"),
+				Server:  evmexact.NewExactEvmScheme(),
+			},
+			{
+				Network: x402sdk.Network("eip155:8453"),
+				Server:  evmexact.NewExactEvmScheme(),
+			},
+			{
+				Network: x402sdk.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+				Server:  solanaexact.NewExactSvmScheme(),
+			},
+			{
+				Network: x402sdk.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+				Server:  solanaexact.NewExactSvmScheme(),
+			},
+		},
+		ErrorHandler: func(c *gin.Context, err error) {
 			log.Printf("x402 payment error: %v (method=%s path=%s)", err, c.Request.Method, c.Request.URL.Path)
-			log.Printf("x402 payment-signature header: %q", c.Request.Header.Get("PAYMENT-SIGNATURE"))
-		}),
-		ginmw.WithSettlementHandler(func(c *gin.Context, settlement *x402sdk.SettleResponse) {
+			paymentSignature := c.Request.Header.Get("PAYMENT-SIGNATURE")
+			xPayment := c.Request.Header.Get("X-PAYMENT")
+			log.Printf(
+				"x402 payment headers present (PAYMENT-SIGNATURE=%t X-PAYMENT=%t)",
+				paymentSignature != "",
+				xPayment != "",
+			)
+			if paymentSignature == "" && xPayment != "" {
+				log.Printf("x402 v2 expects PAYMENT-SIGNATURE; X-PAYMENT is treated as v1")
+			}
+		},
+		SettlementHandler: func(c *gin.Context, settlement *x402sdk.SettleResponse) {
 			log.Printf(
 				"x402 payment settled (method=%s path=%s network=%s success=%t)",
 				c.Request.Method,
@@ -341,8 +504,8 @@ func main() {
 				settlement.Network,
 				settlement.Success,
 			)
-		}),
-	))
+		},
+	}))
 
 	// REST API endpoint
 	// GET /discovery/resources - Returns list of available resources
@@ -388,39 +551,6 @@ func main() {
 				Type:        "http",
 				X402Version: 1,
 			},
-			{
-				Accepts: []X402AcceptRequirement{
-					{
-						Asset:       "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-						Description: "Get synthetic restaurant suggestions by city and food",
-						Extra: map[string]string{
-							"name":    "USDC",
-							"version": "2",
-						},
-						MaxAmountRequired: "10000",
-						MaxTimeoutSeconds: 300,
-						MimeType:          "application/json",
-						Network:           "base-sepolia",
-						OutputSchema: X402OutputSchema{
-							Input: X402InputSchema{
-								Method: "POST",
-								Body: map[string]string{
-									"city": "string",
-									"food": "string",
-								},
-								Type: "http",
-							},
-						},
-						PayTo:    "0x8D170Db9aB247E7013d024566093E13dc7b0f181",
-						Resource: fmt.Sprintf("%s/restaurants", serverBaseURL),
-						Scheme:   "exact",
-					},
-				},
-				LastUpdated: lastUpdated,
-				Resource:    fmt.Sprintf("%s/restaurants", serverBaseURL),
-				Type:        "http",
-				X402Version: 1,
-			},
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -448,32 +578,32 @@ func main() {
 
 	// POST /restaurants - Body: { "city": "...", "food": "..." }
 	// Returns synthetic restaurant suggestions
-	r.POST("/restaurants", func(c *gin.Context) {
-		var req RestaurantRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "invalid JSON body",
-			})
-			return
-		}
-		if req.City == "" || req.Food == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "city and food are required",
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, RestaurantResponse{
-			City: req.City,
-			Food: req.Food,
-			Restaurants: []string{
-				fmt.Sprintf("%s %s House", req.City, req.Food),
-				fmt.Sprintf("%s %s Bistro", req.City, req.Food),
-				fmt.Sprintf("%s %s Kitchen", req.City, req.Food),
-			},
-			Note: "Synthetic recommendations for demo purposes",
-		})
-	})
+	// r.POST("/restaurants", func(c *gin.Context) {
+	// 	var req RestaurantRequest
+	// 	if err := c.ShouldBindJSON(&req); err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"error": "invalid JSON body",
+	// 		})
+	// 		return
+	// 	}
+	// 	if req.City == "" || req.Food == "" {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"error": "city and food are required",
+	// 		})
+	// 		return
+	// 	}
+	//
+	// 	c.JSON(http.StatusOK, RestaurantResponse{
+	// 		City: req.City,
+	// 		Food: req.Food,
+	// 		Restaurants: []string{
+	// 			fmt.Sprintf("%s %s House", req.City, req.Food),
+	// 			fmt.Sprintf("%s %s Bistro", req.City, req.Food),
+	// 			fmt.Sprintf("%s %s Kitchen", req.City, req.Food),
+	// 		},
+	// 		Note: "Synthetic recommendations for demo purposes",
+	// 	})
+	// })
 
 	// MCP SSE endpoint
 	// GET/POST /mcp - MCP server using SSE transport

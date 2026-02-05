@@ -3,8 +3,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createDefaultDebugHandler } from "./debug.js";
 import { X402Handler } from "./x402-handler.js";
-import type { PaymentCheckResult, PaymentRequiredData } from "./x402-types.js";
-import { isPaymentRequired } from "./x402-types.js";
+import type { PaymentRequiredData } from "./x402-types.js";
 import type {
   MCPTool,
   ToolCallRequest,
@@ -202,11 +201,11 @@ export class X402MCPClient {
 
       // Check for x402 payment required in response
       if (this.x402Handler) {
-        let paymentCheck = this.x402Handler.checkPaymentRequired(result.content);
-
-        if (!paymentCheck.required) {
-          paymentCheck = this.checkPaymentRequiredFromProxyResponse(result.content);
-        }
+        const paymentCheck = this.x402Handler.checkPaymentRequired({
+          isError: (result as { isError?: boolean }).isError,
+          structuredContent: (result as { structuredContent?: unknown }).structuredContent,
+          content: result.content,
+        });
 
         if (paymentCheck.required) {
           this.emit(
@@ -226,6 +225,14 @@ export class X402MCPClient {
           // Otherwise, include payment info in response
           response.paymentRequired = true;
           response.content = paymentCheck.requirements;
+        }
+      }
+
+      if (this.x402Handler) {
+        const meta = (result as { _meta?: Record<string, unknown> })._meta;
+        const paymentResponse = this.x402Handler.extractPaymentResponse(meta);
+        if (paymentResponse) {
+          response.paymentResponse = paymentResponse;
         }
       }
 
@@ -267,56 +274,6 @@ export class X402MCPClient {
       }
       throw error;
     }
-  }
-
-  private checkPaymentRequiredFromProxyResponse(content: unknown): PaymentCheckResult {
-    const textItems = Array.isArray(content)
-      ? content.filter(
-          (item): item is { type: "text"; text: string } =>
-            Boolean(item) &&
-            typeof item === "object" &&
-            "type" in item &&
-            (item as { type?: string }).type === "text" &&
-            typeof (item as { text?: string }).text === "string"
-        )
-      : [];
-
-    for (const item of textItems) {
-      try {
-        const parsed = JSON.parse(item.text) as {
-          status?: number;
-          headers?: Record<string, string[] | string>;
-        };
-
-        if (!parsed.headers) {
-          continue;
-        }
-
-        const headerKey = Object.keys(parsed.headers).find(
-          (key) => key.toLowerCase() === "payment-required"
-        );
-        if (!headerKey) {
-          continue;
-        }
-
-        const rawHeader = parsed.headers[headerKey];
-        const encoded = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-        if (!encoded || typeof encoded !== "string") {
-          continue;
-        }
-
-        const decoded = Buffer.from(encoded, "base64").toString("utf8");
-        const paymentRequired = JSON.parse(decoded);
-
-        if (isPaymentRequired(paymentRequired)) {
-          return { required: true, requirements: paymentRequired };
-        }
-      } catch {
-        // Ignore parse errors and keep searching
-      }
-    }
-
-    return { required: false };
   }
 
   /**
@@ -364,21 +321,28 @@ export class X402MCPClient {
       paymentRequired: true,
     };
 
-    // Check for payment response in meta
-    // TODO: Extract payment response from result._meta if available
-    // For now, assume success if we got a non-error response
-    const authorization = paymentPayload.payload.authorization as { from?: string } | undefined;
-    const paymentResponse = {
-      success: true,
-      network: requirements.accepts[0]?.network as `${string}:${string}`,
-      payer: authorization?.from ?? "",
-      transaction: "", // Synthetic - real implementation would get from server
-    };
-    response.paymentResponse = paymentResponse;
+    if (this.x402Handler) {
+      const meta = (result as { _meta?: Record<string, unknown> })._meta;
+      const paymentResponse = this.x402Handler.extractPaymentResponse(meta);
+      if (paymentResponse) {
+        response.paymentResponse = paymentResponse;
+      }
+    }
+
+    if (!response.paymentResponse) {
+      // Fall back to a synthetic response if no payment-response meta is returned
+      const authorization = paymentPayload.payload.authorization as { from?: string } | undefined;
+      response.paymentResponse = {
+        success: true,
+        network: requirements.accepts[0]?.network as `${string}:${string}`,
+        payer: authorization?.from ?? "",
+        transaction: "", // Synthetic - real implementation would get from server
+      };
+    }
 
     this.emit(
       "x402_payment_success",
-      { name: request.name, response: paymentResponse },
+      { name: request.name, response: response.paymentResponse },
       ctx.requestId
     );
 

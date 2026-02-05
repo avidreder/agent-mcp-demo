@@ -25,7 +25,6 @@ import type {
 export const X402_VERSION = 2;
 export const META_KEY_PAYMENT = "x402/payment";
 export const META_KEY_PAYMENT_RESPONSE = "x402/payment-response";
-export const META_KEY_PAYMENT_REQUIRED = "x402/payment-required";
 export const ERROR_CODE_PAYMENT_REQUIRED = 402;
 
 /**

@@ -18,7 +18,6 @@ import type {
 } from "./x402-types.js";
 import {
   META_KEY_PAYMENT,
-  META_KEY_PAYMENT_REQUIRED,
   META_KEY_PAYMENT_RESPONSE,
   isPaymentRequired,
   isPaymentResponse,
@@ -70,8 +69,20 @@ export class X402Handler {
   /**
    * Check if a tool response indicates payment is required
    */
-  checkPaymentRequired(content: unknown): PaymentCheckResult {
-    // Check if content is an array (MCP content format)
+  checkPaymentRequired(result: {
+    isError?: boolean;
+    structuredContent?: unknown;
+    content?: unknown;
+  }): PaymentCheckResult {
+    if (!result.isError) {
+      return { required: false };
+    }
+
+    if (isPaymentRequired(result.structuredContent)) {
+      return { required: true, requirements: result.structuredContent };
+    }
+
+    const content = result.content;
     if (Array.isArray(content)) {
       for (const item of content) {
         if (item && typeof item === "object" && "type" in item && item.type === "text") {
@@ -86,27 +97,6 @@ export class X402Handler {
           }
         }
       }
-    }
-
-    // Check if content itself is payment required data
-    if (isPaymentRequired(content)) {
-      return { required: true, requirements: content };
-    }
-
-    return { required: false };
-  }
-
-  /**
-   * Check if response meta contains payment required data
-   */
-  checkMetaForPaymentRequired(meta: Record<string, unknown> | undefined): PaymentCheckResult {
-    if (!meta) {
-      return { required: false };
-    }
-
-    const paymentRequired = meta[META_KEY_PAYMENT_REQUIRED];
-    if (paymentRequired && isPaymentRequired(paymentRequired)) {
-      return { required: true, requirements: paymentRequired };
     }
 
     return { required: false };
