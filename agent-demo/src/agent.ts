@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { MCPTool } from "x402-mcp";
+
+interface MCPTool {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
 
 export interface ToolSelection {
   toolName: string;

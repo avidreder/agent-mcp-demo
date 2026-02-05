@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	x402http "github.com/coinbase/x402/go/http"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -117,6 +118,7 @@ func (m *Middleware) VerifyPayment(ctx context.Context, toolName string, meta ma
 	// Verify payment using facilitator
 	verifyResp, err := m.facilitator.Verify(ctx, paymentBytes, requirementsBytes)
 	if err != nil {
+		log.Printf("x402 verify error (tool=%s network=%s): %v", toolName, m.network, err)
 		return nil, fmt.Errorf("payment verification failed: %w", err)
 	}
 
@@ -128,7 +130,7 @@ func (m *Middleware) VerifyPayment(ctx context.Context, toolName string, meta ma
 }
 
 // SettlePayment settles a payment using the facilitator
-func (m *Middleware) SettlePayment(ctx context.Context, payment *PaymentPayload, requirements *PaymentRequirements) (*SettleResponse, error) {
+func (m *Middleware) SettlePayment(ctx context.Context, toolName string, payment *PaymentPayload, requirements *PaymentRequirements) (*SettleResponse, error) {
 	// Marshal payment and requirements
 	payloadBytes, err := json.Marshal(payment)
 	if err != nil {
@@ -143,6 +145,7 @@ func (m *Middleware) SettlePayment(ctx context.Context, payment *PaymentPayload,
 	// Settle payment using facilitator
 	settleResp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 	if err != nil {
+		log.Printf("x402 settle error (tool=%s network=%s): %v", toolName, requirements.Network, err)
 		return nil, fmt.Errorf("payment settlement failed: %w", err)
 	}
 
@@ -206,7 +209,7 @@ func WrapToolHandler[In, Out any](
 		}
 
 		// Payment verified - settle it
-		settleResp, err := m.SettlePayment(ctx, payment, &pricing.Accepts[0])
+		settleResp, err := m.SettlePayment(ctx, toolName, payment, &pricing.Accepts[0])
 		if err != nil {
 			return &mcp.CallToolResult{
 				IsError: true,

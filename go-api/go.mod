@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.24.6
 
 require (
+	github.com/coinbase/cdp-sdk/go v0.0.0-20250528192722-54fb4e3068e6
 	github.com/coinbase/x402/go v0.0.0-20260128185729-f680999e1447
 	github.com/gin-gonic/gin v1.11.0
 	github.com/modelcontextprotocol/go-sdk v1.2.0
@@ -38,6 +39,7 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect

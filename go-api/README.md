@@ -10,6 +10,14 @@ go run main.go
 
 Server starts on `http://localhost:8080`
 
+## Environment (.env)
+
+```
+FACILITATOR_URL=http://localhost:8003/v2/x402
+CDP_API_KEY=
+CDP_API_KEY_SECRET=
+```
+
 ## Endpoints
 
 ### REST API

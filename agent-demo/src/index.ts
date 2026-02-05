@@ -1,11 +1,22 @@
-import "dotenv/config";
-import { X402MCPClient, type ToolCallRequest, type ToolCallResponse } from "x402-mcp";
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createx402MCPClient } from "@x402/mcp";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createWallet } from "./wallet.js";
 import { Agent, type ToolCallHistoryItem } from "./agent.js";
 import * as ui from "./ui.js";
 
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
+const repoRoot = path.resolve(currentDir, "..", "..");
+dotenv.config({ path: path.join(repoRoot, ".env") });
+dotenv.config();
+
 const MCP_SERVER_URL =
-  process.env.MCP_SERVER_URL || "http://localhost:8003/v2/x402/mcp";
+  process.env.MCP_SERVER_URL || "http://localhost:18081/discovery/mcp";
 const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "streamable-http";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -42,51 +53,34 @@ async function main() {
   ui.success(`Wallet created`);
   ui.info(`Address: ${wallet.address}`);
 
-  // Step 2: Connect to MCP server with interceptors and debug mode
+  // Step 2: Connect to MCP server
   ui.step("🔌", "Connecting to MCP Server");
 
-  const mcpClient = new X402MCPClient({
-    serverUrl: MCP_SERVER_URL,
-    transport: MCP_TRANSPORT === "sse" ? "sse" : "streamable-http",
-    debug: DEBUG_MODE,
-    // Enable x402 payment support with EVM signer (real EIP-712 signing)
-    signer: wallet.account,
-    autoPayment: true, // Automatically retry with payment on 402
-    interceptors: {
-      // Example: Log outgoing requests with wallet context
-      beforeToolCall: [
-        async (request: ToolCallRequest) => {
-          if (DEBUG_MODE) {
-            ui.info(`Wallet ${wallet.address} calling ${request.name}`);
-          }
-          return request;
-        },
-      ],
-      // Example: Log response timing and payment info
-      afterToolCall: [
-        async (
-          request: ToolCallRequest,
-          response: ToolCallResponse
-        ) => {
-          if (DEBUG_MODE) {
-            ui.info(`Tool ${request.name} completed in ${response.duration}ms`);
-          }
-          // Log x402 payment info if present
-          if (response.paymentRequired) {
-            ui.info(`💰 Payment was required for ${request.name}`);
-            if (response.paymentResponse?.success) {
-              ui.success(`Payment successful: ${response.paymentResponse.transaction || 'completed'}`);
-            }
-          }
-          return response;
-        },
-      ],
+  const mcpClient = createx402MCPClient({
+    name: "x402-agent",
+    version: "0.1.0",
+    schemes: [
+      {
+        network: "eip155:84532",
+        client: new ExactEvmScheme(wallet.account),
+      },
+    ],
+    autoPayment: true,
+    onPaymentRequested: async ({ paymentRequired }) => {
+      if (DEBUG_MODE) {
+        ui.info(`💰 Payment requested: ${paymentRequired.accepts[0]?.amount ?? "unknown"}`);
+      }
+      return true;
     },
   });
 
   const connectSpinner = ui.spinner(`Connecting to ${MCP_SERVER_URL}`);
   try {
-    await withTimeout(mcpClient.connect(), TIMEOUT_MS, "MCP connection");
+    const transport =
+      MCP_TRANSPORT === "sse"
+        ? new SSEClientTransport(new URL(MCP_SERVER_URL))
+        : new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL));
+    await withTimeout(mcpClient.connect(transport), TIMEOUT_MS, "MCP connection");
     connectSpinner.succeed("Connected to MCP server");
   } catch (err) {
     connectSpinner.fail("Failed to connect to MCP server");
@@ -96,7 +90,10 @@ async function main() {
 
   // Step 3: List available tools
   ui.step("🔧", "Fetching Available Tools");
-  const tools = await mcpClient.listTools();
+  const toolsResponse = await mcpClient.listTools();
+  const tools = Array.isArray((toolsResponse as { tools?: unknown }).tools)
+    ? ((toolsResponse as { tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }).tools)
+    : [];
   ui.section(
     "Available Tools",
     tools.map((t) => `• ${t.name} - ${t.description || "No description"}`)
@@ -150,6 +147,15 @@ async function main() {
       executeSpinner.succeed(`Tool executed successfully`);
       ui.json("Response", response.content);
 
+      if (DEBUG_MODE && response.paymentMade) {
+        ui.info(`💰 Payment submitted for ${decision.toolName}`);
+      }
+      if (response.paymentResponse?.success) {
+        ui.success(
+          `Payment successful: ${response.paymentResponse.transaction || "completed"}`
+        );
+      }
+
       history.push({
         toolName: decision.toolName,
         args: decision.args || {},
@@ -180,7 +186,7 @@ async function main() {
   }
 
   // Cleanup
-  await mcpClient.disconnect();
+  await mcpClient.close();
   ui.divider();
   ui.success("Demo complete");
 }

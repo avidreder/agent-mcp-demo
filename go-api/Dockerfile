@@ -19,6 +19,7 @@ WORKDIR /app
 
 # Copy the binary from builder
 COPY --from=builder /go-api .
+COPY --from=builder /app/fixtures /app/fixtures
 
 # Expose port
 EXPOSE 8080
