@@ -135,7 +135,10 @@ async function main() {
 
     // eslint-disable-next-line no-console
     console.log(`Calling tool: ${decision.toolName}`);
-    const result = await mcpClient.callTool(decision.toolName, decision.args);
+    const result = await mcpClient.callTool({
+      name: decision.toolName,
+      arguments: decision.args,
+    });
     history.push({
       toolName: decision.toolName,
       args: decision.args,
