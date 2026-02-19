@@ -1,9 +1,10 @@
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createx402MCPClient } from "@x402/mcp";
+import { createx402MCPClient, type Network } from "@x402/mcp";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/client";
+import { derivePaymentCapabilities, formatCapabilitiesForPrompt } from "./capabilities.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createWallet } from "./wallet.js";
 import { Agent, type ToolCallHistoryItem } from "./agent.js";
@@ -17,9 +18,9 @@ dotenv.config();
 
 const MCP_SERVER_URL =
   process.env.MCP_SERVER_URL || "http://localhost:18081/discovery/mcp";
-const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "streamable-http";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const LLM_API_KEY = process.env.LLM_API_KEY;
+const LLM_BASE_URL = process.env.LLM_BASE_URL;
 const AGENT_GOAL = process.env.AGENT_GOAL || "Find out the weather";
 const DEBUG_MODE = process.env.DEBUG === "true";
 const TIMEOUT_MS = 20000;
@@ -42,8 +43,8 @@ async function main() {
     ui.error("PRIVATE_KEY environment variable is required");
     process.exit(1);
   }
-  if (!ANTHROPIC_API_KEY) {
-    ui.error("ANTHROPIC_API_KEY environment variable is required");
+  if (!LLM_API_KEY) {
+    ui.error("LLM_API_KEY environment variable is required");
     process.exit(1);
   }
 
@@ -56,15 +57,17 @@ async function main() {
   // Step 2: Connect to MCP server
   ui.step("🔌", "Connecting to MCP Server");
 
+  const schemes = [
+    { network: "eip155:8453" as Network, client: new ExactEvmScheme(wallet.account) },
+    { network: "eip155:84532" as Network, client: new ExactEvmScheme(wallet.account) },
+    { network: "base" as Network, client: new ExactEvmSchemeV1(wallet.account), x402Version: 1 },
+    { network: "base-sepolia" as Network, client: new ExactEvmSchemeV1(wallet.account), x402Version: 1 },
+  ];
+
   const mcpClient = createx402MCPClient({
     name: "x402-agent",
     version: "0.1.0",
-    schemes: [
-      {
-        network: "eip155:84532",
-        client: new ExactEvmScheme(wallet.account),
-      },
-    ],
+    schemes,
     autoPayment: true,
     onPaymentRequested: async ({ paymentRequired }) => {
       if (DEBUG_MODE) {
@@ -76,10 +79,7 @@ async function main() {
 
   const connectSpinner = ui.spinner(`Connecting to ${MCP_SERVER_URL}`);
   try {
-    const transport =
-      MCP_TRANSPORT === "sse"
-        ? new SSEClientTransport(new URL(MCP_SERVER_URL))
-        : new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL));
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL));
     await withTimeout(mcpClient.connect(transport), TIMEOUT_MS, "MCP connection");
     connectSpinner.succeed("Connected to MCP server");
   } catch (err) {
@@ -103,7 +103,8 @@ async function main() {
   ui.step("🤖", "Agent Analyzing Goal");
   ui.section("Goal", AGENT_GOAL);
 
-  const agent = new Agent(ANTHROPIC_API_KEY);
+  const capabilitiesPrompt = formatCapabilitiesForPrompt(derivePaymentCapabilities(schemes));
+  const agent = new Agent(LLM_API_KEY, LLM_BASE_URL, capabilitiesPrompt);
   const history: ToolCallHistoryItem[] = [];
   let done = false;
   let finalSummary = "";

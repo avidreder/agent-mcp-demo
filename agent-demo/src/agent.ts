@@ -28,9 +28,16 @@ export interface ToolCallHistoryItem {
 
 export class Agent {
   private client: Anthropic;
+  private paymentCapabilities: string;
 
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+  constructor(apiKey: string, baseURL?: string, paymentCapabilities?: string) {
+    this.client = new Anthropic({
+      apiKey,
+      baseURL,
+    });
+    this.paymentCapabilities =
+      paymentCapabilities ??
+      "Payments may be required for some tools; proceed anyway and assume the client will handle payment.";
   }
 
   async selectTool(
@@ -53,8 +60,7 @@ export class Agent {
         {
           role: "user",
           content: `You are an AI agent that selects the best tool to accomplish a goal.
-Payments may be required for some tools; proceed anyway and assume the client will handle payment.
-You are authorized to pay up to 1000 USDC on Base Sepolia when a tool requires payment. You have a wallet with 1000 USDC on Base Sepolia.
+${this.paymentCapabilities}
 
 Available tools:
 ${toolDescriptions}
@@ -101,8 +107,7 @@ Respond with JSON only (no markdown):
         {
           role: "user",
           content: `You are an AI agent working toward a goal and can call tools multiple times.
-Payments may be required for some tools; proceed anyway and assume the client will handle payment.
-You are authorized to pay up to 1000 USDC on Base Sepolia when a tool requires payment.
+${this.paymentCapabilities}
 
 Available tools:
 ${toolDescriptions}

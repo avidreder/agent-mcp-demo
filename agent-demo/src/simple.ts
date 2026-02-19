@@ -2,9 +2,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { createx402MCPClient, type Network } from "@x402/mcp";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/client";
+import { derivePaymentCapabilities, formatCapabilitiesForPrompt } from "./capabilities.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createWallet } from "./wallet.js";
 
 type MCPTool = {
   name: string;
@@ -39,11 +42,12 @@ dotenv.config();
 
 const MCP_SERVER_URL =
   process.env.MCP_SERVER_URL || "http://localhost:18081/discovery/mcp";
-const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "streamable-http";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const LLM_API_KEY = process.env.LLM_API_KEY;
+const LLM_BASE_URL = process.env.LLM_BASE_URL;
 const SIMPLE_GOAL =
   process.env.SIMPLE_GOAL || "Find a tool to answer the weather in San Francisco.";
-const MAX_STEPS = Number(process.env.SIMPLE_MAX_STEPS || "3");
+const MAX_STEPS = Number(process.env.SIMPLE_MAX_STEPS || "5");
 
 function buildToolSummary(tools: MCPTool[]): string {
   return tools
@@ -60,7 +64,8 @@ async function decideNextStep(
   client: Anthropic,
   goal: string,
   tools: MCPTool[],
-  history: ToolCallHistoryItem[]
+  history: ToolCallHistoryItem[],
+  paymentCapabilities: string
 ): Promise<AgentDecision> {
   const toolSummary = buildToolSummary(tools);
   const message = await client.messages.create({
@@ -71,7 +76,7 @@ async function decideNextStep(
         role: "user",
         content: `You are an AI agent working toward a goal and can call tools multiple times.
 You only have access to the listed MCP tools and must decide which tool to call next.
-If a tool requires payment, you should still call it and include the required arguments.
+${paymentCapabilities}
 
 Available tools:
 ${toolSummary}
@@ -103,16 +108,30 @@ Respond with JSON only (no markdown):
 }
 
 async function main() {
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY environment variable is required");
+  if (!PRIVATE_KEY) {
+    throw new Error("PRIVATE_KEY environment variable is required");
+  }
+  if (!LLM_API_KEY) {
+    throw new Error("LLM_API_KEY environment variable is required");
   }
 
-  const transport =
-    MCP_TRANSPORT === "sse"
-      ? new SSEClientTransport(new URL(MCP_SERVER_URL))
-      : new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL));
+  const transport = new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL));
 
-  const mcpClient = new Client({ name: "simple-agent", version: "0.1.0" });
+  const wallet = createWallet(PRIVATE_KEY);
+  const schemes = [
+    { network: "eip155:8453" as Network, client: new ExactEvmScheme(wallet.account) },
+    { network: "eip155:84532" as Network, client: new ExactEvmScheme(wallet.account) },
+    { network: "base" as Network, client: new ExactEvmSchemeV1(wallet.account), x402Version: 1 },
+    { network: "base-sepolia" as Network, client: new ExactEvmSchemeV1(wallet.account), x402Version: 1 },
+  ];
+  const capabilitiesPrompt = formatCapabilitiesForPrompt(derivePaymentCapabilities(schemes));
+
+  const mcpClient = createx402MCPClient({
+    name: "simple-agent",
+    version: "0.1.0",
+    schemes,
+    autoPayment: true,
+  });
   await mcpClient.connect(transport);
 
   const toolsResponse = await mcpClient.listTools();
@@ -120,11 +139,14 @@ async function main() {
     ? ((toolsResponse as { tools: MCPTool[] }).tools)
     : [];
 
-  const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  const anthropic = new Anthropic({
+    apiKey: LLM_API_KEY,
+    baseURL: LLM_BASE_URL,
+  });
   const history: ToolCallHistoryItem[] = [];
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const decision = await decideNextStep(anthropic, SIMPLE_GOAL, tools, history);
+    const decision = await decideNextStep(anthropic, SIMPLE_GOAL, tools, history, capabilitiesPrompt);
 
     if (decision.action === "done") {
       // eslint-disable-next-line no-console
@@ -135,14 +157,11 @@ async function main() {
 
     // eslint-disable-next-line no-console
     console.log(`Calling tool: ${decision.toolName}`);
-    const result = await mcpClient.callTool({
-      name: decision.toolName,
-      arguments: decision.args,
-    });
+    const result = await mcpClient.callTool(decision.toolName, decision.args);
     history.push({
       toolName: decision.toolName,
       args: decision.args,
-      result,
+      result: result.content,
     });
   }
 
