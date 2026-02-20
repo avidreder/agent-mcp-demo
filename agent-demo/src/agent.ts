@@ -101,7 +101,7 @@ Respond with JSON only (no markdown):
       .join("\n");
 
     const message = await this.client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-opus-4-6",
       max_tokens: 1024,
       messages: [
         {
