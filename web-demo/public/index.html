@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>x402 MCP BAZAAR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0a;--bg2:#111;--bg3:#1a1a1a;
+  --green:#00ff41;--cyan:#00d4ff;--magenta:#ff00ff;
+  --text:#c0c0c0;--text-dim:#666;
+  --border:#222;--border-glow:#00ff4133;
+}
+body{
+  font-family:'JetBrains Mono',monospace;
+  background:var(--bg);color:var(--text);
+  min-height:100vh;overflow-x:hidden;
+}
+/* CRT scanlines */
+body::after{
+  content:'';position:fixed;top:0;left:0;width:100%;height:100%;
+  background:repeating-linear-gradient(
+    0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px
+  );
+  pointer-events:none;z-index:9999;
+}
+/* Header pulse */
+@keyframes header-pulse{
+  0%,100%{text-shadow:0 0 8px rgba(0,255,65,.4),0 0 20px rgba(0,255,65,.1)}
+  50%{text-shadow:0 0 16px rgba(0,255,65,.7),0 0 40px rgba(0,255,65,.2),0 0 60px rgba(0,212,255,.1)}
+}
+@keyframes pulse-border{
+  0%,100%{border-color:var(--cyan)}
+  50%{border-color:var(--magenta)}
+}
+@keyframes fade-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+header{
+  padding:20px 32px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  max-width:1400px;margin:0 auto;
+}
+header h1{
+  font-size:1.6rem;letter-spacing:4px;color:var(--green);
+  animation:header-pulse 3s ease-in-out infinite;
+}
+header h1 span{color:var(--cyan)}
+.status-indicator{
+  display:flex;align-items:center;gap:8px;font-size:.75rem;
+  text-transform:uppercase;letter-spacing:2px;
+}
+.status-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--text-dim);
+}
+.status-dot.connected{background:var(--green);box-shadow:0 0 8px var(--green)}
+.status-dot.connecting{background:var(--cyan);animation:pulse-border 1s infinite}
+.status-dot.error{background:#ff3333}
+
+/* Wizard steps */
+.wizard-steps{
+  display:flex;align-items:center;gap:0;
+  padding:16px 32px;border-bottom:1px solid var(--border);
+  max-width:1400px;margin:0 auto;
+}
+.wiz-step{
+  display:flex;align-items:center;gap:8px;
+  font-size:.72rem;letter-spacing:2px;text-transform:uppercase;
+  color:var(--text-dim);cursor:default;
+  padding:6px 16px;border:1px solid transparent;
+  transition:all .2s;
+}
+.wiz-step .step-num{
+  width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--text-dim);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.65rem;font-weight:700;
+  line-height:1;padding-top:1px;
+}
+.wiz-step.active{color:var(--cyan)}
+.wiz-step.active .step-num{
+  border-color:var(--cyan);color:var(--cyan);
+  box-shadow:0 0 8px rgba(0,212,255,.3);
+}
+.wiz-step.done{color:var(--green);cursor:pointer}
+.wiz-step.done .step-num{
+  border-color:var(--green);color:var(--green);
+}
+.wiz-arrow{
+  color:var(--text-dim);margin:0 8px;font-size:.8rem;
+}
+
+/* Main layout */
+.main{
+  max-width:1400px;margin:0 auto;
+  padding:24px 32px;
+  min-height:calc(100vh - 130px);
+}
+
+/* Step panels */
+.step-panel{display:none;animation:fade-in .3s ease}
+.step-panel.visible{display:block}
+
+/* Search form */
+.search-section{
+  max-width:700px;
+}
+.search-section h2{
+  color:var(--cyan);font-size:1rem;letter-spacing:2px;
+  margin-bottom:4px;
+}
+.search-section .subtitle{
+  color:var(--text-dim);font-size:.75rem;margin-bottom:20px;
+}
+.search-row{
+  display:flex;gap:12px;align-items:flex-end;
+}
+.search-row .form-group{flex:1}
+.search-row .btn{margin-bottom:16px;white-space:nowrap}
+
+.form-group{margin-bottom:16px}
+.form-group label{
+  display:block;color:var(--cyan);font-size:.72rem;
+  letter-spacing:1px;text-transform:uppercase;
+  margin-bottom:6px;
+}
+.form-group label .required{color:var(--magenta)}
+.form-group label .type-hint{color:var(--text-dim);text-transform:none;letter-spacing:0}
+.form-group input,.form-group textarea,.form-group select{
+  width:100%;background:var(--bg2);border:1px solid var(--border);
+  color:var(--green);font-family:inherit;font-size:.8rem;
+  padding:10px 12px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{
+  border-color:var(--cyan);
+  box-shadow:0 0 12px rgba(0,212,255,.15);
+}
+.form-group textarea{resize:vertical;min-height:60px}
+.form-group select{cursor:pointer}
+.form-group select option{background:var(--bg2);color:var(--green)}
+.checkbox-wrap{
+  display:flex;align-items:center;gap:10px;padding:10px 0;
+}
+.checkbox-wrap input[type=checkbox]{
+  width:18px;height:18px;accent-color:var(--cyan);cursor:pointer;
+}
+.extra-params{margin-top:8px}
+.extra-params summary{
+  color:var(--text-dim);font-size:.7rem;letter-spacing:1px;
+  text-transform:uppercase;cursor:pointer;margin-bottom:12px;
+}
+.extra-params summary:hover{color:var(--text)}
+
+/* Buttons */
+.btn{
+  background:transparent;border:1px solid var(--cyan);
+  color:var(--cyan);font-family:inherit;font-size:.75rem;
+  padding:10px 24px;cursor:pointer;
+  letter-spacing:2px;text-transform:uppercase;
+  transition:all .2s;
+}
+.btn:hover{
+  background:rgba(0,212,255,.1);
+  box-shadow:0 0 20px rgba(0,212,255,.2);
+}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.btn.executing{
+  border-color:var(--magenta);color:var(--magenta);
+  animation:pulse-border 1s infinite;
+}
+.btn-sm{padding:6px 14px;font-size:.65rem}
+.btn-green{border-color:var(--green);color:var(--green)}
+.btn-green:hover{
+  background:rgba(0,255,65,.1);
+  box-shadow:0 0 20px rgba(0,255,65,.2);
+}
+
+/* Resource layout: split view */
+.resources-container{
+  display:flex;gap:20px;margin-top:12px;
+  max-height:calc(100vh - 260px);
+}
+.resources-left{
+  flex:1;min-width:0;overflow-y:auto;padding-right:4px;
+}
+.resources-right{
+  flex:1;min-width:0;overflow-y:auto;
+  display:none;
+}
+.resources-right.open{display:block}
+/* When detail is open, left column shrinks */
+.resources-container.split .resources-left{flex:0 0 50%}
+.resources-container.split .resources-right{flex:0 0 50%}
+
+/* Resource grid */
+.resources-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin:0 0 16px;
+}
+.resources-header h3{
+  color:var(--magenta);font-size:.75rem;
+  letter-spacing:2px;text-transform:uppercase;
+}
+.resources-header .count{
+  color:var(--text-dim);font-size:.7rem;letter-spacing:1px;
+}
+.resource-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  gap:16px;
+}
+/* Single column when in split mode */
+.resources-container.split .resource-grid{
+  grid-template-columns:1fr;
+}
+.resource-card{
+  padding:20px 24px;
+  border:1px solid var(--border);
+  background:var(--bg2);
+  cursor:pointer;
+  transition:all .2s;
+  min-height:120px;
+  overflow:hidden;
+}
+.resource-card:hover{
+  border-color:var(--cyan);
+  box-shadow:0 0 16px rgba(0,212,255,.08);
+}
+.resource-card.selected{
+  border-color:var(--cyan);
+  background:var(--bg3);
+  box-shadow:0 0 20px rgba(0,212,255,.12);
+}
+.resource-card .rc-name{
+  color:var(--green);font-size:.88rem;font-weight:700;
+  margin-bottom:8px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.resource-card .rc-desc{
+  color:var(--text-dim);font-size:.7rem;line-height:1.5;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.resource-card .rc-meta{
+  margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;
+}
+.rc-tag{
+  font-size:.6rem;padding:3px 9px;
+  border-radius:10px;letter-spacing:1px;
+  text-transform:uppercase;font-weight:700;
+}
+.rc-tag.payment{background:rgba(255,0,255,.15);border:1px solid rgba(255,0,255,.4);color:#ff80ff}
+.rc-tag.network{background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.3);color:var(--cyan)}
+.rc-tag.type{background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);color:var(--cyan)}
+
+/* Quality + pricing stats bar on cards */
+.rc-stats{
+  display:flex;gap:12px;margin-top:8px;
+  font-size:.6rem;color:var(--text-dim);letter-spacing:.5px;
+}
+.rc-stats .stat{display:flex;align-items:center;gap:4px}
+.rc-stats .stat-val{color:var(--green);font-weight:700}
+
+/* Detail panel: meta info block */
+.rd-meta-block{
+  display:flex;gap:16px;flex-wrap:wrap;
+  margin-bottom:20px;
+}
+.rd-meta-card{
+  flex:1;min-width:140px;
+  padding:14px 16px;
+  border:1px solid var(--border);
+  background:var(--bg);
+}
+.rd-meta-card.pricing{border-color:rgba(255,0,255,.3)}
+.rd-meta-card.quality{border-color:rgba(0,255,65,.3)}
+.rd-meta-card .mc-label{
+  font-size:.6rem;letter-spacing:2px;
+  text-transform:uppercase;font-weight:700;
+  margin-bottom:8px;
+}
+.rd-meta-card.pricing .mc-label{color:var(--magenta)}
+.rd-meta-card.quality .mc-label{color:var(--green)}
+.rd-meta-card .mc-row{
+  display:flex;align-items:baseline;gap:6px;
+  font-size:.72rem;margin-bottom:4px;
+}
+.rd-meta-card .mc-row:last-child{margin-bottom:0}
+.rd-meta-card .mc-key{color:var(--text-dim)}
+.rd-meta-card .mc-val{color:var(--text);font-weight:700}
+.rd-meta-card .mc-val.price{color:var(--magenta);font-size:.85rem}
+.rd-meta-card .mc-val.green{color:var(--green)}
+
+.no-results{
+  padding:40px;text-align:center;
+  color:var(--text-dim);font-size:.8rem;letter-spacing:1px;
+}
+
+/* Resource detail / execute pane */
+.resource-detail{
+  border:1px solid var(--cyan);
+  background:var(--bg2);
+  animation:fade-in .3s ease;
+}
+.rd-header{
+  padding:16px 24px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.rd-header h3{
+  color:var(--cyan);font-size:.9rem;letter-spacing:2px;
+}
+.rd-back{
+  background:none;border:1px solid var(--text-dim);
+  color:var(--text-dim);font-family:inherit;font-size:.65rem;
+  padding:5px 12px;cursor:pointer;letter-spacing:1px;
+  text-transform:uppercase;
+  display:flex;align-items:center;gap:6px;
+  transition:all .2s;
+}
+.rd-back:hover{border-color:var(--cyan);color:var(--cyan)}
+.rd-body{padding:20px 24px}
+.rd-desc{
+  color:var(--text);font-size:.78rem;line-height:1.6;
+  margin-bottom:20px;
+}
+.rd-section-row{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:12px;
+}
+.rd-section-label{
+  color:var(--magenta);font-size:.7rem;
+  letter-spacing:2px;text-transform:uppercase;
+}
+
+/* Schema display */
+.schema-block{
+  background:var(--bg);border:1px solid var(--border);
+  padding:16px;font-size:.72rem;
+  overflow-x:auto;max-height:180px;overflow-y:auto;
+  color:var(--text-dim);white-space:pre-wrap;word-break:break-all;
+  margin-top:16px;
+}
+
+/* Results */
+.result-panel{
+  margin-top:20px;
+  border:1px solid var(--green);
+  background:var(--bg2);
+  animation:fade-in .3s ease;
+}
+.result-panel .rp-header{
+  padding:12px 24px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.result-panel .rp-header h4{
+  color:var(--green);font-size:.78rem;letter-spacing:2px;
+}
+.result-body{
+  padding:16px 24px;
+}
+.result-content{
+  background:var(--bg);border:1px solid var(--border);
+  padding:16px;font-size:.75rem;line-height:1.5;
+  max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;
+}
+.result-content.error{border-color:#ff3333;color:#ff6666}
+.payment-info{
+  margin-top:12px;padding:12px 16px;
+  border:1px solid var(--magenta);
+  background:rgba(255,0,255,.05);
+  font-size:.72rem;
+}
+.payment-info strong{color:var(--magenta)}
+
+.toggle-raw{
+  background:none;border:1px solid var(--text-dim);
+  color:var(--text-dim);font-family:inherit;font-size:.6rem;
+  padding:3px 8px;cursor:pointer;letter-spacing:1px;
+  text-transform:uppercase;
+}
+.toggle-raw:hover{border-color:var(--text);color:var(--text)}
+
+/* Search summary bar (step 2 header) */
+.search-summary{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 20px;margin-bottom:20px;
+  border:1px solid var(--border);background:var(--bg2);
+  animation:fade-in .3s ease;
+}
+.search-summary .ss-label{
+  color:var(--text-dim);font-size:.65rem;
+  letter-spacing:2px;text-transform:uppercase;
+  flex-shrink:0;
+}
+.search-summary .ss-chips{
+  display:flex;gap:8px;flex-wrap:wrap;flex:1;
+}
+.ss-chip{
+  font-size:.68rem;padding:4px 10px;
+  background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);
+  color:var(--cyan);
+}
+.ss-chip .chip-key{color:var(--text-dim);margin-right:4px}
+.search-summary .btn{flex-shrink:0}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>x402</span> MCP BAZAAR</h1>
+  <div class="status-indicator">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">connecting</span>
+  </div>
+</header>
+
+<div class="wizard-steps">
+  <div class="wiz-step active" id="wizStep1" data-step="1">
+    <div class="step-num">1</div>
+    <span>Search</span>
+  </div>
+  <div class="wiz-arrow">&rarr;</div>
+  <div class="wiz-step" id="wizStep2" data-step="2">
+    <div class="step-num">2</div>
+    <span>Select &amp; Execute</span>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Step 1: Search -->
+  <div class="step-panel visible" id="step1Panel">
+    <div class="search-section">
+      <h2>Search Resources</h2>
+      <div class="subtitle">Discover paid APIs and tools available on the x402 network</div>
+      <form id="searchForm" onsubmit="return false">
+        <div id="searchPrimaryFields"></div>
+        <div id="searchExtraFields"></div>
+        <div style="margin-top:4px">
+          <button class="btn" id="searchBtn" type="submit">Search</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Step 2: Browse & Execute -->
+  <div class="step-panel" id="step2Panel">
+    <div id="searchSummary"></div>
+    <div class="resources-header">
+      <h3>Resources</h3>
+      <span class="count" id="resourceCount"></span>
+    </div>
+    <div class="resources-container" id="resourcesContainer">
+      <div class="resources-left">
+        <div id="resourceGrid" class="resource-grid"></div>
+      </div>
+      <div class="resources-right" id="resourcesRight">
+        <div id="resourceDetail"></div>
+        <div id="executeResult"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  let allTools = [];
+  let searchTool = null;
+  let proxyTool = null;
+  let resources = [];
+  let selectedResource = null;
+  let executing = false;
+
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+
+  // --- Status polling ---
+  async function pollStatus() {
+    try {
+      const r = await fetch('/api/status');
+      const data = await r.json();
+      $('#statusDot').className = 'status-dot ' + data.state;
+      $('#statusText').textContent = data.state;
+    } catch {}
+  }
+  setInterval(pollStatus, 5000);
+  pollStatus();
+
+  // --- Init: fetch tool schemas ---
+  async function init() {
+    try {
+      const r = await fetch('/api/tools');
+      const data = await r.json();
+      allTools = data.tools || [];
+      searchTool = allTools.find(t => t.name === 'search_resources');
+      proxyTool = allTools.find(t => t.name === 'proxy_tool_call');
+
+      if (searchTool) {
+        renderSearchForm(searchTool);
+      } else {
+        $('.search-section').innerHTML =
+          '<div style="color:#ff3333;padding:20px">search_resources tool not found on server</div>';
+      }
+    } catch (err) {
+      $('.search-section').innerHTML =
+        '<div style="color:#ff3333;padding:20px">Failed to connect to server</div>';
+    }
+  }
+
+  // --- Search form from search_resources schema ---
+  const SEARCH_PRIMARY = ['query', 'network', 'maxUsdPrice'];
+
+  function renderSearchForm(tool) {
+    const schema = tool.inputSchema || {};
+    const props = schema.properties || {};
+    const required = schema.required || [];
+
+    const primaryKeys = SEARCH_PRIMARY.filter(k => k in props);
+    const extraKeys = Object.keys(props).filter(k => !primaryKeys.includes(k));
+
+    let primaryHtml = '';
+    for (const key of primaryKeys) {
+      primaryHtml += renderFormField(key, props[key], required.includes(key), 'search');
+    }
+    $('#searchPrimaryFields').innerHTML = primaryHtml;
+
+    if (extraKeys.length > 0) {
+      let extraHtml = '<details class="extra-params"><summary>Advanced options (' + extraKeys.length + ')</summary>';
+      for (const key of extraKeys) {
+        extraHtml += renderFormField(key, props[key], required.includes(key), 'search');
+      }
+      extraHtml += '</details>';
+      $('#searchExtraFields').innerHTML = extraHtml;
+    }
+  }
+
+  // --- Generic form field renderer ---
+  // path: optional dot-separated path for nested fields (e.g. "body.input")
+  function renderFormField(key, prop, isRequired, prefix, path) {
+    const dataPrefix = prefix ? `data-prefix="${esc(prefix)}"` : '';
+    const dataPath = path ? `data-path="${esc(path)}"` : '';
+    const reqMark = isRequired ? ' <span class="required">*</span>' : '';
+    const typeHint = ` <span class="type-hint">(${prop.type || 'any'})</span>`;
+    const desc = prop.description
+      ? `<div style="color:var(--text-dim);font-size:.65rem;margin-bottom:6px">${esc(prop.description)}</div>`
+      : '';
+
+    if (prop.type === 'boolean') {
+      return `<div class="form-group">
+        <label>${esc(key)}${reqMark}${typeHint}</label>${desc}
+        <div class="checkbox-wrap">
+          <input type="checkbox" data-key="${esc(key)}" data-type="boolean" ${dataPrefix} ${dataPath}>
+          <span style="font-size:.75rem;color:var(--text-dim)">Enable</span>
+        </div>
+      </div>`;
+    }
+    if (prop.enum) {
+      const opts = prop.enum.map(v => `<option value="${esc(String(v))}">${esc(String(v))}</option>`).join('');
+      return `<div class="form-group">
+        <label>${esc(key)}${reqMark}${typeHint}</label>${desc}
+        <select data-key="${esc(key)}" data-type="enum" ${dataPrefix} ${dataPath}>
+          <option value="">-- select --</option>${opts}
+        </select>
+      </div>`;
+    }
+    if (prop.type === 'object' || prop.type === 'array') {
+      return `<div class="form-group">
+        <label>${esc(key)}${reqMark}${typeHint}</label>${desc}
+        <textarea data-key="${esc(key)}" data-type="json" ${dataPrefix} ${dataPath}
+          placeholder='${prop.type === 'array' ? '["value1","value2"]' : '{"key":"value"}'}'></textarea>
+      </div>`;
+    }
+    if (prop.type === 'number' || prop.type === 'integer') {
+      return `<div class="form-group">
+        <label>${esc(key)}${reqMark}${typeHint}</label>${desc}
+        <input type="number" data-key="${esc(key)}" data-type="number" ${dataPrefix} ${dataPath}
+          placeholder="${esc(prop.default != null ? String(prop.default) : '')}">
+      </div>`;
+    }
+    return `<div class="form-group">
+      <label>${esc(key)}${reqMark}${typeHint}</label>${desc}
+      <input type="text" data-key="${esc(key)}" data-type="string" ${dataPrefix} ${dataPath}
+        placeholder="${esc(prop.default != null ? String(prop.default) : '')}">
+    </div>`;
+  }
+
+  // --- Collect form values ---
+  function collectArgs(container, prefix) {
+    const args = {};
+    const selector = prefix
+      ? `[data-key][data-prefix="${prefix}"]`
+      : '[data-key]';
+    container.querySelectorAll(selector).forEach(el => {
+      const key = el.dataset.key;
+      const type = el.dataset.type;
+      if (type === 'boolean') {
+        args[key] = el.checked;
+      } else if (type === 'number') {
+        if (el.value !== '') args[key] = Number(el.value);
+      } else if (type === 'json') {
+        if (el.value.trim()) {
+          try { args[key] = JSON.parse(el.value); } catch { args[key] = el.value; }
+        }
+      } else {
+        if (el.value !== '') args[key] = el.value;
+      }
+    });
+    return args;
+  }
+
+  // --- Search execution ---
+  $('#searchBtn').addEventListener('click', doSearch);
+  $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); doSearch(); });
+
+  async function doSearch() {
+    if (executing) return;
+    executing = true;
+    const btn = $('#searchBtn');
+    btn.disabled = true;
+    btn.classList.add('executing');
+    btn.textContent = 'SEARCHING...';
+
+    const args = collectArgs($('#searchForm'), 'search');
+
+    try {
+      const r = await fetch('/api/tools/search_resources/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      const data = await r.json();
+
+      if (!r.ok || data.isError) {
+        resources = [];
+        renderSearchSummary(args);
+        renderResourceGrid();
+        setWizardStep(2);
+        showSearchError(data.error || 'Search failed');
+      } else {
+        resources = parseResources(data.content);
+        selectedResource = null;
+        $('#resourceDetail').innerHTML = '';
+        $('#executeResult').innerHTML = '';
+        renderSearchSummary(args);
+        renderResourceGrid();
+        setWizardStep(2);
+      }
+    } catch (err) {
+      resources = [];
+      renderSearchSummary(args);
+      renderResourceGrid();
+      setWizardStep(2);
+      showSearchError(err.message);
+    } finally {
+      executing = false;
+      btn.disabled = false;
+      btn.classList.remove('executing');
+      btn.textContent = 'SEARCH';
+    }
+  }
+
+  function showSearchError(msg) {
+    $('#resourceGrid').innerHTML = `<div class="no-results" style="color:#ff6666">${esc(msg)}</div>`;
+    $('#resourceCount').textContent = '';
+  }
+
+  // --- Parse resources from MCP content ---
+  function parseResources(content) {
+    if (!content) return [];
+
+    // Content is an array of MCP content items
+    const items = Array.isArray(content) ? content : [content];
+    let parsed = [];
+
+    for (const item of items) {
+      const text = typeof item === 'string' ? item : (item.text || '');
+      if (!text) continue;
+
+      // Try parsing as JSON
+      try {
+        const json = JSON.parse(text);
+        if (Array.isArray(json)) {
+          parsed = parsed.concat(json);
+        } else if (json.resources && Array.isArray(json.resources)) {
+          parsed = parsed.concat(json.resources);
+        } else if (json.tools && Array.isArray(json.tools)) {
+          parsed = parsed.concat(json.tools);
+        } else if (json.name) {
+          parsed.push(json);
+        }
+      } catch {
+        // Not JSON — try line-by-line or just store as a single text resource
+        // This handles non-JSON text responses gracefully
+      }
+    }
+
+    return parsed;
+  }
+
+  // --- Render resource grid ---
+  function renderResourceGrid() {
+    const grid = $('#resourceGrid');
+    const countEl = $('#resourceCount');
+
+    if (resources.length === 0) {
+      grid.innerHTML = '<div class="no-results">No resources found. Try a different query.</div>';
+      countEl.textContent = '';
+      return;
+    }
+
+    countEl.textContent = resources.length + ' found';
+
+    grid.innerHTML = resources.map((res, i) => {
+      const name = res.name || res.tool_name || res.title || `Resource ${i + 1}`;
+      const rawDesc = res.description || res.summary || '';
+      const desc = rawDesc.split(/\bWARNING:/i)[0].trim();
+      const isSelected = selectedResource === i;
+      const { quality, pricing } = extractMeta(res);
+
+      let metaHtml = '';
+      if (pricing) {
+        metaHtml += `<span class="rc-tag payment">${esc(pricing.amount)} ${esc(pricing.currency)}</span>`;
+        metaHtml += `<span class="rc-tag network">${esc(pricing.network)}</span>`;
+      } else {
+        // Fallback to old fields
+        const hasPay = res.price || res.payment || res.pricing || res.cost;
+        if (hasPay) {
+          const priceStr = typeof hasPay === 'object'
+            ? (hasPay.amount || hasPay.price || JSON.stringify(hasPay))
+            : String(hasPay);
+          metaHtml += `<span class="rc-tag payment">${esc(priceStr)}</span>`;
+        }
+        if (res.network) {
+          metaHtml += `<span class="rc-tag network">${esc(res.network)}</span>`;
+        }
+      }
+      if (res.type || res.resource_type) {
+        metaHtml += `<span class="rc-tag type">${esc(res.type || res.resource_type)}</span>`;
+      }
+
+      let statsHtml = '';
+      if (quality) {
+        statsHtml = `<div class="rc-stats">
+          <div class="stat"><span class="mc-key">calls</span> <span class="stat-val">${esc(String(quality.totalCalls || 0))}</span></div>
+          <div class="stat"><span class="mc-key">payers</span> <span class="stat-val">${esc(String(quality.uniquePayers || 0))}</span></div>
+          <div class="stat"><span class="mc-key">last</span> <span class="stat-val">${esc(timeAgo(quality.lastCallAt))}</span></div>
+        </div>`;
+      }
+
+      return `<div class="resource-card${isSelected ? ' selected' : ''}" data-idx="${i}">
+        <div class="rc-name" title="${esc(name)}">${esc(humanize(name))}</div>
+        <div class="rc-desc">${esc(desc)}</div>
+        ${metaHtml ? '<div class="rc-meta">' + metaHtml + '</div>' : ''}
+        ${statsHtml}
+      </div>`;
+    }).join('');
+
+    $$('.resource-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const idx = Number(card.dataset.idx);
+        selectResource(idx);
+      });
+    });
+  }
+
+  // --- Select a resource ---
+  function selectResource(idx) {
+    selectedResource = idx;
+    renderResourceGrid();
+    renderResourceDetail(resources[idx]);
+    // Open split view
+    $('#resourcesContainer').classList.add('split');
+    $('#resourcesRight').classList.add('open');
+  }
+
+  function deselectResource() {
+    selectedResource = null;
+    renderResourceGrid();
+    $('#resourceDetail').innerHTML = '';
+    $('#executeResult').innerHTML = '';
+    $('#resourcesContainer').classList.remove('split');
+    $('#resourcesRight').classList.remove('open');
+  }
+
+  // --- Extract the leaf-level parameter fields from a resource schema ---
+  // The schema nests real fields inside properties.parameters.properties,
+  // and those can themselves be objects (e.g. body -> { input: string }).
+  // Returns { leafFields: [{path, key, prop, required}], hasFields: bool }
+  function extractParamFields(schema) {
+    const fields = [];
+    const topProps = (schema.properties || {});
+    const paramsDef = topProps.parameters;
+    const innerProps = paramsDef && paramsDef.properties ? paramsDef.properties : null;
+
+    if (!innerProps) return { leafFields: fields, hasFields: false };
+
+    for (const [groupKey, groupProp] of Object.entries(innerProps)) {
+      // If this property is an object with its own properties, render its children
+      if (groupProp.type === 'object' && groupProp.properties && Object.keys(groupProp.properties).length > 0) {
+        const groupRequired = groupProp.required || [];
+        for (const [fieldKey, fieldProp] of Object.entries(groupProp.properties)) {
+          fields.push({
+            path: groupKey + '.' + fieldKey,
+            groupLabel: groupKey,
+            key: fieldKey,
+            prop: fieldProp,
+            required: groupRequired.includes(fieldKey),
+          });
+        }
+      } else {
+        // Leaf-level param directly inside parameters
+        const paramsRequired = paramsDef.required || [];
+        fields.push({
+          path: groupKey,
+          groupLabel: null,
+          key: groupKey,
+          prop: groupProp,
+          required: paramsRequired.includes(groupKey),
+        });
+      }
+    }
+
+    return { leafFields: fields, hasFields: fields.length > 0 };
+  }
+
+  // --- Render resource detail + execute form ---
+  function renderResourceDetail(res) {
+    const detail = $('#resourceDetail');
+    const rawName = res.name || res.tool_name || res.title || 'Unknown';
+    const name = humanize(rawName);
+    const rawDesc = res.description || res.summary || 'No description available';
+    const desc = rawDesc.split(/\bWARNING:/i)[0].trim();
+
+    const schema = res.inputSchema || res.input_schema || res.parameters || {};
+    const { leafFields, hasFields } = extractParamFields(schema);
+
+    let formHtml = '';
+    let lastGroup = null;
+    for (const field of leafFields) {
+      // Add a group header when entering a new object group
+      if (field.groupLabel && field.groupLabel !== lastGroup) {
+        formHtml += `<div style="color:var(--text-dim);font-size:.65rem;letter-spacing:1px;text-transform:uppercase;margin:12px 0 6px;border-bottom:1px solid var(--border);padding-bottom:4px">${esc(field.groupLabel)}</div>`;
+        lastGroup = field.groupLabel;
+      }
+      formHtml += renderFormField(field.key, field.prop, field.required, 'exec', field.path);
+    }
+
+    const paramsSection = hasFields
+      ? `<div class="rd-section-row">
+            <div class="rd-section-label">Parameters</div>
+            <button class="btn btn-green" id="execBtn" type="button">Execute</button>
+          </div>
+          <form id="execForm" onsubmit="return false">
+            ${formHtml}
+          </form>`
+      : `<div style="margin-top:8px">
+            <button class="btn btn-green" id="execBtn" type="button">Execute</button>
+          </div>`;
+
+    // Build meta info cards (pricing + quality)
+    const { quality, pricing } = extractMeta(res);
+    let metaBlockHtml = '';
+
+    if (pricing || quality) {
+      let cards = '';
+      if (pricing) {
+        let acceptRows = '';
+        for (const a of pricing.allAccepts) {
+          const amt = formatTokenAmount(a.amount, a.extra);
+          const cur = (a.extra && a.extra.name) || a.asset || '?';
+          const net = a.network || '?';
+          acceptRows += `<div class="mc-row"><span class="mc-val price">${esc(amt)}</span> <span class="mc-key">${esc(cur)}</span> <span class="mc-key">on</span> <span class="mc-val">${esc(net)}</span></div>`;
+        }
+        cards += `<div class="rd-meta-card pricing">
+          <div class="mc-label">Pricing</div>
+          ${acceptRows}
+        </div>`;
+      }
+      if (quality) {
+        cards += `<div class="rd-meta-card quality">
+          <div class="mc-label">Quality</div>
+          <div class="mc-row"><span class="mc-key">Total calls</span> <span class="mc-val green">${esc(String(quality.totalCalls || 0))}</span></div>
+          <div class="mc-row"><span class="mc-key">Unique payers</span> <span class="mc-val green">${esc(String(quality.uniquePayers || 0))}</span></div>
+          <div class="mc-row"><span class="mc-key">Last called</span> <span class="mc-val green">${esc(timeAgo(quality.lastCallAt))}</span></div>
+        </div>`;
+      }
+      metaBlockHtml = `<div class="rd-meta-block">${cards}</div>`;
+    }
+
+    detail.innerHTML = `
+      <div class="resource-detail">
+        <div class="rd-header">
+          <h3>${esc(name)}</h3>
+          <button class="rd-back" id="rdBack">&larr; Back</button>
+        </div>
+        <div class="rd-body">
+          <div class="rd-desc">${esc(desc)}</div>
+          ${metaBlockHtml}
+          ${paramsSection}
+          ${hasFields
+            ? `<details class="extra-params" style="margin-top:16px">
+                <summary>Input Schema</summary>
+                <div class="schema-block">${esc(JSON.stringify(schema, null, 2))}</div>
+              </details>`
+            : ''}
+        </div>
+      </div>
+    `;
+
+    $('#rdBack').addEventListener('click', () => deselectResource());
+
+    $('#execBtn').addEventListener('click', () => executeResource(res));
+    const execForm = $('#execForm');
+    if (execForm) execForm.addEventListener('submit', (e) => { e.preventDefault(); executeResource(res); });
+  }
+
+  // --- Collect exec form values into the nested parameters structure ---
+  function collectExecArgs(container) {
+    const params = {};
+    container.querySelectorAll('[data-key][data-prefix="exec"]').forEach(el => {
+      const path = el.dataset.path || el.dataset.key;
+      const type = el.dataset.type;
+
+      let val;
+      if (type === 'boolean') {
+        val = el.checked;
+      } else if (type === 'number') {
+        if (el.value === '') return;
+        val = Number(el.value);
+      } else if (type === 'json') {
+        if (!el.value.trim()) return;
+        try { val = JSON.parse(el.value); } catch { val = el.value; }
+      } else {
+        if (el.value === '') return;
+        val = el.value;
+      }
+
+      // Build nested object from dot-separated path
+      const parts = path.split('.');
+      let target = params;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!(parts[i] in target)) target[parts[i]] = {};
+        target = target[parts[i]];
+      }
+      target[parts[parts.length - 1]] = val;
+    });
+    return params;
+  }
+
+  // --- Execute resource via proxy_tool_call ---
+  async function executeResource(res) {
+    if (executing) return;
+    executing = true;
+    const btn = $('#execBtn');
+    btn.disabled = true;
+    btn.classList.add('executing');
+    btn.textContent = 'EXECUTING...';
+
+    const resourceName = res.name || res.tool_name || '';
+
+    // Collect the nested parameters from the form
+    const execForm = $('#execForm');
+    const innerParams = execForm ? collectExecArgs(execForm) : {};
+
+    // Always call via proxy_tool_call — discovered resources are not directly callable
+    const toolName = 'proxy_tool_call';
+    const callArgs = { toolName: resourceName, parameters: innerParams };
+
+    try {
+
+      const r = await fetch(`/api/tools/${encodeURIComponent(toolName)}/call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(callArgs),
+      });
+      const data = await r.json();
+
+      if (!r.ok) {
+        showExecResult(null, data.error || 'Request failed', null);
+      } else {
+        showExecResult(data.content, data.isError ? 'Tool returned an error' : null, data.payment);
+      }
+    } catch (err) {
+      showExecResult(null, err.message, null);
+    } finally {
+      executing = false;
+      btn.disabled = false;
+      btn.classList.remove('executing');
+      btn.textContent = 'EXECUTE';
+    }
+  }
+
+  // --- Execution result display ---
+  let showingRaw = false;
+  let lastExecResult = null;
+
+  function showExecResult(content, error, payment) {
+    lastExecResult = { content, error, payment };
+    showingRaw = false;
+    renderExecResult();
+    const el = $('#executeResult');
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function renderExecResult() {
+    const { content, error, payment } = lastExecResult;
+    const el = $('#executeResult');
+
+    let contentHtml = '';
+    if (error) {
+      contentHtml = `<div class="result-content error">${esc(error)}</div>`;
+    } else if (content) {
+      if (showingRaw) {
+        contentHtml = `<div class="result-content">${esc(JSON.stringify(content, null, 2))}</div>`;
+      } else {
+        const text = Array.isArray(content)
+          ? content.map(c => c.text || JSON.stringify(c)).join('\n')
+          : JSON.stringify(content, null, 2);
+        contentHtml = `<div class="result-content">${esc(text)}</div>`;
+      }
+    }
+
+    let paymentHtml = '';
+    if (payment && payment.amount !== undefined) {
+      paymentHtml = `<div class="payment-info">
+        <strong>PAYMENT:</strong> ${esc(payment.amount)} ${esc(payment.currency)} on ${esc(payment.network)}
+        <br><strong>ENDPOINT:</strong> ${esc(payment.endpoint)}
+      </div>`;
+    }
+
+    el.innerHTML = `
+      <div class="result-panel">
+        <div class="rp-header">
+          <h4>Result</h4>
+          <button class="toggle-raw" id="toggleRaw">${showingRaw ? 'FORMATTED' : 'RAW JSON'}</button>
+        </div>
+        <div class="result-body">
+          ${contentHtml}
+          ${paymentHtml}
+        </div>
+      </div>
+    `;
+
+    $('#toggleRaw').addEventListener('click', () => {
+      showingRaw = !showingRaw;
+      renderExecResult();
+    });
+  }
+
+  // --- Wizard step management ---
+  let currentStep = 1;
+
+  function setWizardStep(step) {
+    currentStep = step;
+    const s1 = $('#wizStep1');
+    const s2 = $('#wizStep2');
+    const p1 = $('#step1Panel');
+    const p2 = $('#step2Panel');
+
+    if (step >= 2) {
+      s1.className = 'wiz-step done';
+      s2.className = 'wiz-step active';
+      p1.classList.remove('visible');
+      p2.classList.add('visible');
+    } else {
+      s1.className = 'wiz-step active';
+      s2.className = 'wiz-step';
+      p1.classList.add('visible');
+      p2.classList.remove('visible');
+    }
+  }
+
+  // Click step 1 to go back to search form
+  $('#wizStep1').addEventListener('click', () => {
+    setWizardStep(1);
+  });
+
+  // --- Render search summary bar ---
+  function renderSearchSummary(args) {
+    const el = $('#searchSummary');
+    const chips = Object.entries(args)
+      .filter(([, v]) => v !== '' && v !== undefined && v !== null && v !== false)
+      .map(([k, v]) => {
+        const display = typeof v === 'boolean' ? 'yes' : String(v);
+        return `<span class="ss-chip"><span class="chip-key">${esc(k)}:</span>${esc(display)}</span>`;
+      })
+      .join('');
+
+    el.innerHTML = `<div class="search-summary">
+      <span class="ss-label">Search</span>
+      <div class="ss-chips">${chips || '<span style="color:var(--text-dim);font-size:.7rem">all resources</span>'}</div>
+      <button class="btn btn-sm" id="editSearchBtn">Edit Search</button>
+    </div>`;
+
+    $('#editSearchBtn').addEventListener('click', () => setWizardStep(1));
+  }
+
+  // --- Extract _meta fields from a resource ---
+  function extractMeta(res) {
+    const meta = res._meta || {};
+    const quality = meta['x402/quality'] || null;
+    const paymentReq = meta['x402/payment-required'] || null;
+
+    let pricing = null;
+    if (paymentReq && Array.isArray(paymentReq.accepts) && paymentReq.accepts.length > 0) {
+      // Pick the first accept option as primary display
+      const accept = paymentReq.accepts[0];
+      pricing = {
+        amount: formatTokenAmount(accept.amount, accept.extra),
+        currency: (accept.extra && accept.extra.name) || accept.asset || 'unknown',
+        network: accept.network || 'unknown',
+        scheme: accept.scheme || 'unknown',
+        allAccepts: paymentReq.accepts,
+      };
+    }
+
+    return { quality, pricing };
+  }
+
+  // Format raw token amount to human-readable (e.g. "10000" USDC → "0.01")
+  function formatTokenAmount(raw, extra) {
+    if (!raw) return '?';
+    const num = Number(raw);
+    if (isNaN(num)) return raw;
+    // Common stablecoin decimals: USDC/USDT = 6, DAI = 18
+    const name = ((extra && extra.name) || '').toLowerCase();
+    let decimals = 18;
+    if (name.includes('usd coin') || name.includes('usdc') || name.includes('usdt') || name.includes('tether')) {
+      decimals = 6;
+    }
+    const val = num / Math.pow(10, decimals);
+    // Format nicely: avoid excessive trailing zeros
+    if (val >= 0.01) return val.toFixed(2);
+    if (val >= 0.0001) return val.toFixed(4);
+    return val.toPrecision(3);
+  }
+
+  // Format relative time
+  function timeAgo(isoStr) {
+    if (!isoStr) return 'never';
+    const diff = Date.now() - new Date(isoStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    return days + 'd ago';
+  }
+
+  // --- Util ---
+  // Turn "get_weather_forecast" or "getWeatherForecast" into "Get Weather Forecast"
+  function humanize(s) {
+    if (!s) return '';
+    return s
+      // insert space before capitals in camelCase
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      // replace underscores/hyphens with spaces
+      .replace(/[_-]+/g, ' ')
+      // capitalize each word
+      .replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function esc(s) {
+    if (s == null) return '';
+    const d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+
+  // --- Boot ---
+  init();
+})();
+</script>
+</body>
+</html>

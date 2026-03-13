@@ -40,6 +40,26 @@ export class Agent {
       "Payments may be required for some tools; proceed anyway and assume the client will handle payment.";
   }
 
+  private parseJSONResponse<T>(raw: string): T {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      throw new Error("Empty response from model");
+    }
+
+    const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const candidate = fencedMatch ? fencedMatch[1].trim() : trimmed;
+
+    try {
+      return JSON.parse(candidate) as T;
+    } catch (err) {
+      throw new Error(
+        `Failed to parse JSON response from model: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
   async selectTool(
     goal: string,
     tools: MCPTool[]
@@ -83,7 +103,7 @@ Respond with JSON only (no markdown):
       throw new Error("Unexpected response type");
     }
 
-    return JSON.parse(content.text) as ToolSelection;
+    return this.parseJSONResponse<ToolSelection>(content.text);
   }
 
   async decideNextStep(
@@ -135,7 +155,7 @@ Respond with JSON only (no markdown):
       throw new Error("Unexpected response type");
     }
 
-    return JSON.parse(content.text) as AgentDecision;
+    return this.parseJSONResponse<AgentDecision>(content.text);
   }
 
   async summarizeResult(

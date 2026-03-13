@@ -48,6 +48,7 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL;
 const SIMPLE_GOAL =
   process.env.SIMPLE_GOAL || "Find a tool to answer the weather in San Francisco.";
 const MAX_STEPS = Number(process.env.SIMPLE_MAX_STEPS || "5");
+const STEP_DELAY_MS = Number(process.env.STEP_DELAY_MS || "750");
 
 function buildToolSummary(tools: MCPTool[]): string {
   return tools
@@ -58,6 +59,10 @@ function buildToolSummary(tools: MCPTool[]): string {
       return `- ${t.name}: ${t.description || "No description"}\n  inputSchema: ${schema}`;
     })
     .join("\n");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function decideNextStep(
@@ -131,6 +136,38 @@ async function main() {
     version: "0.1.0",
     schemes,
     autoPayment: true,
+    onPaymentRequested: async ({ paymentRequired }) => {
+      const accepts = paymentRequired.accepts ?? [];
+      const preferredNetworks = new Set(schemes.map((scheme) => scheme.network));
+      const selected =
+        accepts.find((accept) => preferredNetworks.has(accept.network as Network)) ??
+        accepts[0];
+      const currency =
+        (selected?.extra as { name?: string } | undefined)?.name ??
+        selected?.asset ??
+        "unknown";
+      const amount =
+        (selected as { amount?: string; maxAmountRequired?: string } | undefined)
+          ?.amount ??
+        (selected as { maxAmountRequired?: string } | undefined)
+          ?.maxAmountRequired ??
+        "unknown";
+      const network = selected?.network ?? "unknown";
+      const priced = amount !== "unknown" && currency !== "unknown";
+      const endpoint = (selected as { resource?: string } | undefined)?.resource ?? "unknown";
+
+      // eslint-disable-next-line no-console
+      console.log("Payment requested:");
+      // eslint-disable-next-line no-console
+      console.log(`  Endpoint: ${endpoint}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Selected: ${amount} ${currency} on ${network}`);
+      // eslint-disable-next-line no-console
+      console.log(
+        `  Price check: ${priced ? "confirmed acceptable" : "pending"} for goal "${SIMPLE_GOAL}"`
+      );
+      return true;
+    },
   });
   await mcpClient.connect(transport);
 
@@ -146,7 +183,20 @@ async function main() {
   const history: ToolCallHistoryItem[] = [];
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const decision = await decideNextStep(anthropic, SIMPLE_GOAL, tools, history, capabilitiesPrompt);
+    let decision: AgentDecision;
+    try {
+      decision = await decideNextStep(
+        anthropic,
+        SIMPLE_GOAL,
+        tools,
+        history,
+        capabilitiesPrompt
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err instanceof Error ? err.message : err);
+      break;
+    }
 
     if (decision.action === "done") {
       // eslint-disable-next-line no-console
@@ -157,12 +207,21 @@ async function main() {
 
     // eslint-disable-next-line no-console
     console.log(`Calling tool: ${decision.toolName}`);
-    const result = await mcpClient.callTool(decision.toolName, decision.args);
+    let result;
+    try {
+      result = await mcpClient.callTool(decision.toolName, decision.args);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err instanceof Error ? err.message : err);
+      break;
+    }
     history.push({
       toolName: decision.toolName,
       args: decision.args,
       result: result.content,
     });
+
+    await sleep(STEP_DELAY_MS);
   }
 
   // eslint-disable-next-line no-console

@@ -25,6 +25,7 @@ const AGENT_GOAL = process.env.AGENT_GOAL || "Find out the weather";
 const DEBUG_MODE = process.env.DEBUG === "true";
 const TIMEOUT_MS = 20000;
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || "5");
+const STEP_DELAY_MS = Number(process.env.STEP_DELAY_MS || "750");
 
 function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
   return Promise.race([
@@ -33,6 +34,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Pro
       setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
     ),
   ]);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -70,8 +75,33 @@ async function main() {
     schemes,
     autoPayment: true,
     onPaymentRequested: async ({ paymentRequired }) => {
+      const accepts = paymentRequired.accepts ?? [];
+      const preferredNetworks = new Set(schemes.map((scheme) => scheme.network));
+      const selected =
+        accepts.find((accept) => preferredNetworks.has(accept.network as Network)) ??
+        accepts[0];
+      const currency =
+        (selected?.extra as { name?: string } | undefined)?.name ??
+        selected?.asset ??
+        "unknown";
+      const amount =
+        (selected as { amount?: string; maxAmountRequired?: string } | undefined)
+          ?.amount ??
+        (selected as { maxAmountRequired?: string } | undefined)
+          ?.maxAmountRequired ??
+        "unknown";
+      const network = selected?.network ?? "unknown";
+      const priced = amount !== "unknown" && currency !== "unknown";
+      const endpoint = (selected as { resource?: string } | undefined)?.resource ?? "unknown";
+
+      ui.section("Payment Requested", [
+        `Endpoint: ${endpoint}`,
+        `Selected: ${amount} ${currency} on ${network}`,
+        `Price check: ${priced ? "confirmed acceptable" : "pending"} for goal "${AGENT_GOAL}"`,
+      ]);
+
       if (DEBUG_MODE) {
-        ui.info(`💰 Payment requested: ${paymentRequired.accepts[0]?.amount ?? "unknown"}`);
+        ui.info(`Available payment options: ${accepts.length}`);
       }
       return true;
     },
@@ -111,14 +141,21 @@ async function main() {
 
   for (let step = 1; step <= MAX_TOOL_CALLS; step++) {
     const thinkingSpinner = ui.spinner(`Agent is thinking (step ${step}/${MAX_TOOL_CALLS})...`);
-    const decision = await withTimeout(
-      agent.decideNextStep(AGENT_GOAL, tools, history),
-      TIMEOUT_MS,
-      "Agent decision"
-    );
-    thinkingSpinner.stop();
+    let decision: Awaited<ReturnType<typeof agent.decideNextStep>>;
+    try {
+      decision = await withTimeout(
+        agent.decideNextStep(AGENT_GOAL, tools, history),
+        TIMEOUT_MS,
+        "Agent decision"
+      );
+      thinkingSpinner.stop();
+    } catch (err) {
+      thinkingSpinner.fail("Agent decision failed");
+      ui.error(err instanceof Error ? err.message : String(err));
+      break;
+    }
 
-    ui.agentThought(decision.reason);
+    ui.section("Decision", `I chose the next step because: ${decision.reason}`);
 
     if (decision.action === "done") {
       done = true;
@@ -146,7 +183,16 @@ async function main() {
         "Tool execution"
       );
       executeSpinner.succeed(`Tool executed successfully`);
-      ui.json("Response", response.content);
+      try {
+        const toolSummary = await withTimeout(
+          agent.summarizeResult(AGENT_GOAL, decision.toolName, response.content),
+          TIMEOUT_MS,
+          "Tool summary"
+        );
+        ui.section("Tool Result", toolSummary);
+      } catch (err) {
+        ui.error(err instanceof Error ? err.message : String(err));
+      }
 
       if (DEBUG_MODE && response.paymentMade) {
         ui.info(`💰 Payment submitted for ${decision.toolName}`);
@@ -167,21 +213,28 @@ async function main() {
       ui.error(err instanceof Error ? err.message : String(err));
       break;
     }
+
+    await sleep(STEP_DELAY_MS);
   }
 
   ui.step("📝", "Agent Summary");
   if (done) {
     ui.section("Result", finalSummary);
   } else if (history.length > 0) {
-    const summarySpinner = ui.spinner("Generating summary...");
+    const summarySpinner = ui.spinner("Summarizing progress...");
     const last = history[history.length - 1];
-    const summary = await withTimeout(
-      agent.summarizeResult(AGENT_GOAL, last.toolName, last.result),
-      TIMEOUT_MS,
-      "Agent summary"
-    );
-    summarySpinner.stop();
-    ui.section("Result", summary);
+    try {
+      const summary = await withTimeout(
+        agent.summarizeResult(AGENT_GOAL, last.toolName, last.result),
+        TIMEOUT_MS,
+        "Agent summary"
+      );
+      summarySpinner.stop();
+      ui.section("Result", summary);
+    } catch (err) {
+      summarySpinner.fail("Summary failed");
+      ui.error(err instanceof Error ? err.message : String(err));
+    }
   } else {
     ui.section("Result", "No tool calls were completed.");
   }
